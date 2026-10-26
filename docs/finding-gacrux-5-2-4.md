@@ -1,5 +1,7 @@
 # Finding: Gacrux reads Article 5.2.4's "higher ranked" as TPN order
 
+**RETRACTED 2026-10-26.** Gacrux does not read "higher ranked" as TPN order. Cause: the harness called Gacrux without `-n R`, and without it Gacrux pairs "1 + the last round holding an over-the-board game" (`TieBreakServer/trf2json.py:699-706`), so after a round of forfeits and byes only it re-pairs that round and returns the pairing already in the file. Given the round with `-n`, Gacrux, bbpPairings and Ainalrami return identical boards on both boards (the diagnosis below is wrong: Gacrux re-paired the all-forfeit round 3 instead of round 4). The harness now passes the round; the text below is kept as the record of what was believed.
+
 **Status: adjudicated 2026-08-28, and reported upstream.**
 Not a finding against this engine. Ainalrami and bbpPairings agree on both
 boards; Gacrux is alone.

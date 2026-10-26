@@ -66,6 +66,8 @@ with the reference on every one of them.
 
 ## [Unreleased]
 
+- [Fix] The Gacrux leg of the three-way harness now passes the round being paired (`-n R`). Without it Gacrux pairs one past the last round holding an over-the-board game, so after a round of forfeits and byes it re-paired that round. Every recorded Gacrux disagreement, `docs/finding-gacrux-5-2-4.md` and `docs/finding-gacrux-5-2-5.md` included, was that artefact; both are marked RETRACTED, the `:reach` colour classifier is removed, and the two fixtures are regression tests (Gacrux with `-n` equals bbpPairings equals Ainalrami). Engine unchanged.
+
 ## [0.46.0] - 2026-10-24
 
 - [Feature] **Team Swiss events can keep teams apart.** `Ainalrami.TeamPairing.pair_round/2` takes the individual engine's `:forbidden_pairs` and `:soft_pairs`, same names, same shapes (groups of team numbers, or `{tpns, first_round, last_round}`). The case is the regional event with three teams from one club, which in round one of sixteen teams seats Gistel 1 against Gistel 2 on board three with perfect FIDE conscience; with the club kept apart it pairs 3-12 and 4-11, which is what the organiser did by hand. A forbidden pair is, to C.04.6, a pair that has already met: [C1] refuses it in every bracket, in the bye's 3.4.1, in [C3] and in [C6]'s look-ahead, and nothing else moves. Not FIDE, and said so.

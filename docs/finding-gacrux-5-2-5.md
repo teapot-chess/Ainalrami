@@ -1,5 +1,7 @@
 # Gacrux breaks Article 5.2.5: two boards of one round need opposite initial colours
 
+**RETRACTED 2026-10-26.** Gacrux does not break Article 5.2.5. Cause: the harness called Gacrux without `-n R`, and without it Gacrux pairs "1 + the last round holding an over-the-board game" (`TieBreakServer/trf2json.py:699-706`), so after a round of forfeits and byes only it re-pairs that round and returns the pairing already in the file. Given the round with `-n`, Gacrux, bbpPairings and Ainalrami return identical boards on the fixtures (`seed32007296` with `-n 2` gives `6 8 / 4 1 / 5 0`, as bbpPairings does). The harness now passes the round; the text below is kept as the record of what was believed.
+
 **Status:** confirmed and reproducible, 2026-09-08. Supersedes the reading
 recorded earlier the same day, which said the consistency check could not
 detect a 5.2.5 violation in Gacrux at all. That reading was wrong. See

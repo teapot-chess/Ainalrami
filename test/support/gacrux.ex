@@ -52,10 +52,10 @@ defmodule Ainalrami.Test.Gacrux do
       is how it reports a round with no legal completion
     * `{:crashed, detail}` - it raised inside the checker and wrote
       `### Error 510` into its output file. Missing data, not an answer;
-      see `classify/3`
+      see `classify/4`
     * `{:error, {code, output}}` - anything else
   """
-  def pair(trf_text) do
+  def pair(trf_text, round \\ nil) do
     dir = Path.join(System.tmp_dir!(), "ainalrami-gacrux-#{System.unique_integer([:positive])}")
     File.mkdir_p!(dir)
     input = Path.join(dir, "input.trf")
@@ -64,12 +64,14 @@ defmodule Ainalrami.Test.Gacrux do
     try do
       File.write!(input, trf_text)
 
-      args = [script_path(), "-i", input, "-o", output, "-p", "-dT", "-m", "dutch"]
+      args =
+        [script_path(), "-i", input, "-o", output, "-p", "-dT", "-m", "dutch"] ++
+          round_args(round)
 
       case run(args) do
         {out, 0} ->
           case File.read(output) do
-            {:ok, text} -> classify(text, out, input)
+            {:ok, text} -> classify(text, out, input, round)
             {:error, _} -> {:no_valid_pairing, out}
           end
 
@@ -83,6 +85,19 @@ defmodule Ainalrami.Test.Gacrux do
       remove_dir(dir)
     end
   end
+
+  # `round` is the round being paired and MUST be passed by any caller that
+  # knows it. Without `-n R` Gacrux pairs "1 + the last round that holds an
+  # over-the-board game" (`trf2json.py:699-706`; `+`, `-` and byes are not
+  # played games), so after a round of forfeits and byes only it re-pairs
+  # THAT round and returns the pairing already in the file. Every
+  # Ainalrami-versus-Gacrux "disagreement" recorded before 2026-10-25 was
+  # that artefact. `nil` keeps the old behaviour for callers that do not
+  # know the round.
+  defp round_args(nil), do: []
+
+  defp round_args(round) when is_integer(round) and round > 0,
+    do: ["-n", Integer.to_string(round)]
 
   # Two things `System.cmd/3` cannot express on its own, both learned the
   # expensive way: a validation run wedged silently at 19:50 and was still
@@ -204,10 +219,10 @@ defmodule Ainalrami.Test.Gacrux do
   # Every other code is a real failure - a bad command line, an unreadable
   # input, a method it does not implement - and stays an error, so a harness
   # stops rather than quoting a rate built on whatever survived.
-  defp classify(text, out, input) do
+  defp classify(text, out, input, round) do
     case Regex.run(~r/^###\s+Error\s+(\d+)/m, text) do
       nil -> classify_pairs(parse_output(text), out)
-      [_, "510"] -> {:crashed, crash_detail(input, text)}
+      [_, "510"] -> {:crashed, crash_detail(input, text, round)}
       [_, code] -> {:error, {String.to_integer(code), String.trim(text) <> out}}
     end
   end
@@ -217,9 +232,9 @@ defmodule Ainalrami.Test.Gacrux do
   # second invocation - but only on the crash path, which has already
   # produced nothing. The normal path never runs this. `GACRUX_TRACEBACK=0`
   # switches it off for an axis where crashes are expected to be common.
-  defp crash_detail(input, text) do
+  defp crash_detail(input, text, round) do
     if System.get_env("GACRUX_TRACEBACK", "1") in ["1", "true"] do
-      traceback(input) || String.trim(text)
+      traceback(input, round) || String.trim(text)
     else
       String.trim(text)
     end
@@ -229,8 +244,10 @@ defmodule Ainalrami.Test.Gacrux do
   # the exception reaches stderr. Anything unexpected here returns `nil` and
   # the caller falls back to the error page: a failure to explain a crash
   # must not become a second crash.
-  defp traceback(input) do
-    args = [script_path(), "-i", input, "-o", input <> ".v.out", "-p", "-dT", "-m", "dutch", "-v"]
+  defp traceback(input, round) do
+    args =
+      [script_path(), "-i", input, "-o", input <> ".v.out", "-p", "-dT", "-m", "dutch", "-v"] ++
+        round_args(round)
 
     {out, _code} = run(args)
 

@@ -281,7 +281,7 @@ defmodule Ainalrami.ThreeWayComparisonTest do
         # `networkx` is enough) looked exactly like a field running out of
         # legal opponents, and the run would report a confident bound
         # computed from almost no rounds.
-        case {Bbppairings.pair(trf), Gacrux.pair(trf)} do
+        case {Bbppairings.pair(trf), Gacrux.pair(trf, round)} do
           {{:ok, bbp}, {:ok, gac}} ->
             ours = safely_pair(ps, rounds, forbidden)
 
@@ -406,7 +406,7 @@ defmodule Ainalrami.ThreeWayComparisonTest do
     by_rank = Map.new(players, &{&1.rank, &1})
 
     %{
-      bbp_gac: colours_between({"bbpPairings", "Gacrux"}, bbp, gac, by_rank, :reach, where),
+      bbp_gac: colours_between({"bbpPairings", "Gacrux"}, bbp, gac, by_rank, :none, where),
       # Asked of each reference's own round, not of the pair: an engine can be
       # internally inconsistent whether or not the other one agrees with it,
       # and that is a finding about THAT engine.
@@ -493,6 +493,12 @@ defmodule Ainalrami.ThreeWayComparisonTest do
   # "explained" by our differing from it. That is not an explanation, it is
   # a tautology that swallows regressions, so the bucket is gone rather than
   # left to report zero.
+  #
+  # RETRACTED 2026-10-26: bbpPairings against Gacrux now runs as `:none`.
+  # `:reach` existed to file bbp-vs-Gacrux colour differences under a
+  # weaker word, and every such difference was Gacrux pairing the wrong
+  # round (it was not given `-n`). With the round passed there is nothing
+  # to explain, so a difference there is reported as unexplained.
   #
   # `:reach` is all that survives when NEITHER side is this engine. On a
   # bbpPairings-vs-Gacrux board there is no claim to make about THIS
