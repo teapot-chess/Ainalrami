@@ -910,6 +910,11 @@ prints the weaker word for it - those boards are "within 5.2.5's reach",
 not a confirmed anything. That is the only surviving classification of a
 colour difference anywhere in the harnesses.
 
+**Retracted 2026-10-26.** The Gacrux differences this section classifies, and the two boards
+below, were Gacrux pairing the wrong round: the harness did not pass `-n R`. With it, Gacrux
+agrees with bbpPairings and Ainalrami, `:reach` is gone, and the finding docs are marked
+retracted.
+
 **`:reach` was kept for the wrong reason for ten days, and that is worth
 recording.** The justification in the harness used to be that the two
 references renumber differently from each other, so a field where somebody

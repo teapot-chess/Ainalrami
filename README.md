@@ -1102,8 +1102,8 @@ probe, is in
 | [docs/dispute-seed735265.md](docs/dispute-seed735265.md) | the one disagreement, argued from the regulations |
 | [docs/bbppairings-c2-bug-report.md](docs/bbppairings-c2-bug-report.md) | that dispute as a submittable upstream report |
 | [docs/dispute-initial-colour.md](docs/dispute-initial-colour.md) | the Article 5.2.5 dispute this engine lost, and the SPP ruling that closed it |
-| [docs/finding-gacrux-5-2-4.md](docs/finding-gacrux-5-2-4.md) | Gacrux reads Article 5.2.4's "higher ranked" as TPN order, not score then TPN |
-| [docs/finding-gacrux-5-2-5.md](docs/finding-gacrux-5-2-5.md) | Gacrux breaks Article 5.2.5: two boards of one round imply opposite initial colours |
+| [docs/finding-gacrux-5-2-4.md](docs/finding-gacrux-5-2-4.md) | RETRACTED: the Gacrux 5.2.4 finding was a harness artefact (no `-n R`) |
+| [docs/finding-gacrux-5-2-5.md](docs/finding-gacrux-5-2-5.md) | RETRACTED: the Gacrux 5.2.5 finding was the same artefact |
 | [docs/conformance-c0406-teams.md](docs/conformance-c0406-teams.md) | team Swiss (C.04.6): readings, verification method, no colour preferences |
 | [docs/team-proof-large-fields.md](docs/team-proof-large-fields.md) | the exact whole-round reference for team fields up to 80 teams |
 | [docs/conformance-c07-tiebreaks.md](docs/conformance-c07-tiebreaks.md) | tie-breaks (C.07): every reading taken |
