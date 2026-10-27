@@ -4606,18 +4606,27 @@ defmodule Ainalrami.Pairing do
     # The field graph scores the whole field only when it is about to BUILD
     # the round matcher from it; once built, a bracket boundary is the
     # window's edges changing on an existing graph.
-    {round_matcher, _, _} = Process.get(@round_matcher_key)
+    {round_matcher, _, field_size} = Process.get(@round_matcher_key)
+    transposition = transposition_terms(m, sgb, nsgb)
 
-    base =
+    {base, prebuilt} =
       case mode do
         :local ->
-          arr
-          |> base_edge_weights(m, sgb, nsgb, nsgb, ctx, bands, single_bye?)
-          |> stand_in_edges(arr, sgb, nsgb, wsgb, ctx, bands, single_bye?)
+          base =
+            arr
+            |> base_edge_weights(m, sgb, nsgb, nsgb, ctx, bands, single_bye?)
+            |> stand_in_edges(arr, sgb, nsgb, wsgb, ctx, bands, single_bye?)
+
+          {base, nil}
 
         :field ->
-          scored = if round_matcher != nil, do: min(wsgb, m), else: m
-          base_edge_weights(arr, m, sgb, nsgb, scored, ctx, bands, single_bye?)
+          if round_matcher == nil and
+               first_build_rows?(transposition, m, nsgb, wsgb) do
+            first_field_build(arr, field_pos, field_size, sgb, nsgb, ctx, bands, single_bye?)
+          else
+            scored = if round_matcher != nil, do: min(wsgb, m), else: m
+            {base_edge_weights(arr, m, sgb, nsgb, scored, ctx, bands, single_bye?), nil}
+          end
       end
 
     %{
@@ -4636,7 +4645,11 @@ defmodule Ainalrami.Pairing do
       live: base,
       wm: nil,
       synced: false,
-      transposition: transposition_terms(m, sgb, nsgb),
+      transposition: transposition,
+      # The round matcher's rows, built with `base` by `first_field_build/8`
+      # for the solve that builds the matcher (`solve_field/1`), and dropped
+      # by it.
+      prebuilt: prebuilt,
       # Any value above every real weight will do: `finalize_pair/3`
       # leaves the two vertices exactly one usable edge each, so the pair
       # is forced regardless of magnitude.
@@ -7227,15 +7240,29 @@ defmodule Ainalrami.Pairing do
           # tie-break is switched on; doubled for room. Too LARGE is
           # harmless -- it is only the initial dual, and bbpPairings'
           # `aboveMaxEdgeWeight` is likewise a bound, not exact.
-          list =
-            for {{i, j}, w} <- st.live, w > 0 do
-              {to_field.(i), to_field.(j), weigh.(i, j, w)}
-            end
+          case st.prebuilt do
+            nil ->
+              list =
+                for {{i, j}, w} <- st.live, w > 0 do
+                  {to_field.(i), to_field.(j), weigh.(i, j, w)}
+                end
 
-          WeightedMatching.new(field_size, list,
-            max_weight: round_ceiling(st, field_size),
-            gcd: 1
-          )
+              WeightedMatching.new(field_size, list,
+                max_weight: round_ceiling(st, field_size),
+                gcd: 1
+              )
+
+            # The same rows `new/3` would fold out of that list, built with
+            # `base` (`first_field_build/8`) - `live` is still `base` at the
+            # bracket's first solve.
+            adjacency ->
+              WeightedMatching.new(field_size, [],
+                adjacency: adjacency,
+                symmetric: true,
+                max_weight: round_ceiling(st, field_size),
+                gcd: 1
+              )
+          end
 
         not st.synced ->
           # Bracket boundary. For every vertex of the WINDOW (the bracket and
@@ -7317,7 +7344,15 @@ defmodule Ainalrami.Pairing do
       end)
 
     Process.put(@round_matcher_key, {matcher, field_index, field_size})
-    st = %{st | matching: matching, synced: true, snap: {matcher, make_ref()}, guess: nil}
+
+    st = %{
+      st
+      | matching: matching,
+        synced: true,
+        snap: {matcher, make_ref()},
+        guess: nil,
+        prebuilt: nil
+    }
 
     # A window whose optimum wants the field below (a dummy matched, or
     # priced) no longer stands for the whole graph: the bracket continues on
@@ -7731,22 +7766,188 @@ defmodule Ainalrami.Pairing do
   # diff walked them again: 1.4 s of a 9 s round at 400 players, for
   # values that could not have changed.
   defp base_edge_weights(arr, m, sgb, nsgb, scored, ctx, bands, single_bye?) do
-    reach = reach_table(arr, m, nsgb)
+    weight = pair_weigher(arr, m, sgb, nsgb, scored, ctx, bands, single_bye?)
     last = scored - 1
 
-    Enum.reduce(0..(last - 1)//1, %{}, fn i, acc ->
-      a = elem(arr, i)
+    list =
+      for i <- 0..(last - 1)//1,
+          j <- (i + 1)..last//1,
+          w = weight.(i, j),
+          w != nil,
+          do: {{i, j}, w}
 
-      Enum.reduce((i + 1)..last//1, acc, fn j, inner ->
-        r = Map.get(reach, j, 0)
-        b = elem(arr, j)
+    :maps.from_list(list)
+  end
 
-        case bracket_edge_weight(a, b, j, sgb, r, ctx, bands, single_bye?) do
-          nil -> inner
-          w -> Map.put(inner, {i, j}, w)
+  # `bracket_edge_weight/8` for the pair at positions `x < y` of `arr`, with
+  # the per-player parts of every pair OUTSIDE the bracket computed once per
+  # player instead of once per pair. Those pairs are most of the graph on a
+  # large field (`outside_edge_weight/6`), and every term of their weight but
+  # the soft rung's is a sum of one term per player - the completion rung's
+  # `!isByeCandidate` bits, C8's place of the higher player, C9's unplayed
+  # ranks - so the weight is
+  #
+  #     reserve * (base * S0 + e(x) * S0 + e(y) * S0 + u(x) * S9 + u(y) * S9
+  #                + [reach 1] (S8p + place(x) * S8s) + [not soft] S_soft)
+  #
+  # with `S` the suffix products `outside_layout/2` reads off the ladder:
+  # the integer `outside_edge_weight/6` computes, multiplied out. Legality is
+  # the same lookups as `legal_pair?/2` and `colour_compatible?/2`, asked of
+  # the better-placed player as they are there, with the player's played
+  # opponents, forbidden set and absolute colour read once. A pair inside
+  # the bracket goes to `bracket_edge_weight/8` itself. `nil` for no edge.
+  defp pair_weigher(arr, m, sgb, nsgb, scored, ctx, bands, single_bye?) do
+    layout = ctx.outside
+    suffix = layout.suffix
+    reserve = bands.reserve
+    reach = reach_table(arr, m, nsgb)
+    reach_t = List.to_tuple(for j <- 0..(scored - 1)//1, do: Map.get(reach, j, 0))
+    forbidden = Process.get(@forbidden_key)
+    soft = Process.get(@soft_key)
+
+    base_c =
+      case env_flag(@env_completion_key, "AINALRAMI_COMPLETION") do
+        "eligibility" -> 0
+        _ -> 1
+      end
+
+    s0 = elem(suffix, 0) * reserve
+    s8p = elem(suffix, layout.c8_pairs) * reserve
+    s8s = elem(suffix, layout.c8_scores) * reserve
+    s9 = elem(suffix, layout.c9) * reserve
+    soft_s = if layout.soft != nil, do: elem(suffix, layout.soft) * reserve
+    const = base_c * s0
+
+    facts =
+      List.to_tuple(
+        for i <- 0..(scored - 1)//1 do
+          p = elem(arr, i)
+          stats = p.colour_stats
+          own = bit(not bye_candidate?(p, ctx.bye_score)) * s0
+          own = if single_bye?, do: own + unplayed_rank(p, ctx) * s9, else: own
+
+          c8 =
+            case Map.get(bands.places, p.points) do
+              nil -> nil
+              place -> s8p + place * s8s
+            end
+
+          pref = if stats.absolute? and not is_nil(stats.preference), do: stats.preference
+          forbidden_set = if forbidden, do: Map.get(forbidden, p.rank)
+          soft_set = if soft, do: Map.get(soft.map, p.rank)
+          {p.rank, met_set(p), forbidden_set, pref, own, c8, soft_set}
+        end
+      )
+
+    fn x, y ->
+      cond do
+        y < sgb ->
+          nil
+
+        elem(reach_t, y) == 0 ->
+          bracket_edge_weight(elem(arr, x), elem(arr, y), y, sgb, 0, ctx, bands, single_bye?)
+
+        true ->
+          {_rank_x, met_x, forbidden_x, pref_x, own_x, c8_x, soft_x} = elem(facts, x)
+          {rank_y, _met_y, _forbidden_y, pref_y, own_y, _c8_y, _soft_y} = elem(facts, y)
+
+          if not forbids?(forbidden_x, rank_y) and not is_map_key(met_x, rank_y) and
+               (pref_x == nil or pref_x != pref_y or
+                  final_round_topscorers?(elem(arr, x), elem(arr, y))) do
+            r = elem(reach_t, y)
+
+            if r == 1 and c8_x == nil do
+              # No place for the score: the exact computation, which refuses
+              # it the same way.
+              outside_edge_weight(elem(arr, x), elem(arr, y), r, ctx, bands, single_bye?)
+            else
+              w = const + own_x + own_y
+              w = if r == 1, do: w + c8_x, else: w
+              if soft_s != nil and not forbids?(soft_x, rank_y), do: w + soft_s, else: w
+            end
+          end
+      end
+    end
+  end
+
+  defp met_set(%{@facts_key => {met, _eligible, _played}}), do: met
+  defp met_set(player), do: met_ranks(player)
+
+  # The round's first field-graph bracket builds the round matcher from
+  # every pair of the field. Its rows are built here with `base`, a row at a
+  # time with both halves computed, and `new/3` takes them as `:adjacency` -
+  # instead of `base` becoming an edge list that `new/3` folds back apart,
+  # two map updates per edge (the trade `searched_bootstrap/9` measured).
+  # Not where the bracket will run on its window alone (`window_setup/1`
+  # builds its own matchers), nor with the transposition tie-break on,
+  # whose weigher this does not reproduce.
+  defp first_build_rows?(transposition, m, nsgb, wsgb) do
+    big? = nsgb >= @window_min_bracket and m - wsgb >= @window_min_below
+
+    window? =
+      Process.get(@cert_key) == true and m > wsgb and rem(wsgb, 2) == 0 and nsgb >= 2 and
+        (big? or cert_force?())
+
+    transposition.scale == 1 and map_size(transposition.terms) == 0 and not window?
+  end
+
+  # `{base, rows}`: `base_edge_weights/8` over the whole field, and the
+  # matcher's `%{u => %{v => 2w}}` for it - `w` what `edge_weigher/3` gives
+  # the pair at field positions `u` and `v`, a vertex without a positive edge
+  # left out - exactly what `new/3` builds from the list `solve_field/1`
+  # makes of `base`. A pair's weight is computed from each end by the same
+  # function on the same ordered pair, so the two rows agree.
+  defp first_field_build(arr, field_pos, field_size, sgb, nsgb, ctx, bands, single_bye?) do
+    m = tuple_size(arr)
+    weight = pair_weigher(arr, m, sgb, nsgb, m, ctx, bands, single_bye?)
+    p = field_size * field_size + 1
+    half = div(nsgb, 2)
+
+    # `edge_weigher/3` on the doubled scale, for `x < y` (`natural_gap/3`:
+    # both in the bracket exactly when `y` is).
+    doubled = fn y, fx, fy, w ->
+      gap = if y < nsgb, do: half, else: 0
+      2 * (w * p + field_size - abs(abs(fy - fx) - gap))
+    end
+
+    {rows, base} =
+      Enum.reduce((m - 1)..0//-1, {[], []}, fn i, {rows, base} ->
+        fi = elem(field_pos, i)
+
+        {row, base} =
+          Enum.reduce((m - 1)..(i + 1)//-1, {[], base}, fn j, {row, base} ->
+            case weight.(i, j) do
+              nil ->
+                {row, base}
+
+              w when w > 0 ->
+                fj = elem(field_pos, j)
+                {[{fj, doubled.(j, fi, fj, w)} | row], [{{i, j}, w} | base]}
+
+              w ->
+                {row, [{{i, j}, w} | base]}
+            end
+          end)
+
+        row =
+          Enum.reduce((i - 1)..0//-1, row, fn j, row ->
+            case weight.(j, i) do
+              w when is_integer(w) and w > 0 ->
+                fj = elem(field_pos, j)
+                [{fj, doubled.(i, fj, fi, w)} | row]
+
+              _ ->
+                row
+            end
+          end)
+
+        case row do
+          [] -> {rows, base}
+          _ -> {[{fi, :maps.from_list(row)} | rows], base}
         end
       end)
-    end)
+
+    {:maps.from_list(base), :maps.from_list(rows)}
   end
 
   # How far BELOW the current bracket each position sits, counted in score

@@ -157,7 +157,11 @@ defmodule Ainalrami.WeightedMatching do
   in between was 500,500 tuples at n=1,001 allocated only to be consumed
   here, and the fold on top of them was a million `Map.update/4`s. Pass
   `:max_weight` with it - the ceiling is otherwise derived from `edges`,
-  which such a caller does not supply.
+  which such a caller does not supply. `symmetric: true` with it says every
+  edge sits in both its endpoints' rows at one weight, as `adjacency_of/1`
+  leaves them, so the greedy start may test tightness the way it does for
+  a graph built here (`greedy_start/4`); the state is then the one `edges`
+  would have built.
   """
   def new(n, edges, opts \\ []) do
     if Profile.on?() do
@@ -224,7 +228,14 @@ defmodule Ainalrami.WeightedMatching do
       end
 
     state =
-      build_state(n, edges, ceiling, Keyword.get(opts, :duals), Keyword.get(opts, :adjacency))
+      build_state(
+        n,
+        edges,
+        ceiling,
+        Keyword.get(opts, :duals),
+        Keyword.get(opts, :adjacency),
+        Keyword.get(opts, :symmetric, false)
+      )
 
     Map.put(state, :gcd, gcd)
   end
@@ -1231,7 +1242,7 @@ defmodule Ainalrami.WeightedMatching do
     end)
   end
 
-  defp build_state(n, edges, ceiling, duals, adjacency) do
+  defp build_state(n, edges, ceiling, duals, adjacency, symmetric?) do
     # Adjacency, not a flat `{u, v} => w` map. A resistance (`dual[u] +
     # dual[v] - w`) is the innermost operation in the whole algorithm --
     # every row walk computes one per neighbour -- and a tuple key means
@@ -1261,7 +1272,7 @@ defmodule Ainalrami.WeightedMatching do
           end)
         end
 
-    {dual, blossom_match} = greedy_start(n, weights, duals, adjacency == nil)
+    {dual, blossom_match} = greedy_start(n, weights, duals, adjacency == nil or symmetric?)
 
     state = %{
       n: n,
