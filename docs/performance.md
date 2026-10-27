@@ -4,8 +4,8 @@ First where the certified shortcuts switch on, then the score variants
 (`Pairing.pair_variants/3`, the batch behind OpenPairings' next-round
 preview). Then the timing study, which measures
 all three engines on 3,000 random positions and is the figure to quote.
-Then six passes, newest first: the
-weighted matcher itself (the blossom fallback), the slow tail of the last
+Then seven passes, newest first: the
+whole-field build, the weighted matcher itself (the blossom fallback), the slow tail of the last
 round, the slow spots the direct bracket left, the
 direct bracket on odd fields, the direct bracket itself, which took the
 pairing past Gacrux on every benchmark file, and the large-field pass
@@ -491,6 +491,116 @@ left](#what-is-left)). Positions outside the tail are unchanged.
   447,152 rounds identical in the default configuration and 44,325 in
   check mode with every new answer held to the path it replaces - see the
   slow tail's [How it was checked](#how-it-was-checked).
+
+## The whole-field build (2026-10-27)
+
+The slow tail after the timing study, re-timed on this branch's base
+(c945ad5) on a 16-thread Windows desktop, not the 80-vCPU VM the tables
+above came from - its numbers run 10-20% above the VM's and are only
+compared with each other. 3,000 positions as the timing study draws them,
+then the 40 slowest re-timed alone, median of seven.
+
+### Where the time was
+
+The 8.26 s position the study was written for is long gone (0.031 s since
+"The slow tail"). What leads now:
+
+| position | ms | path |
+|---|---:|---|
+| 600 / 9 / 8150600 | 912 | top bracket of 4, no perfect matching: the whole field graph |
+| 400 / 9 / 8780400 | 464 | certified read tied, round re-paired; its 3-player top bracket on the whole field graph |
+| 600 / 9 / 8620600 | 329 | pruned walk past budget, stages on an 83-93-player local graph |
+| 600 / 9 / 8640600 | 288 | the same |
+| 601 / 9 / 8930601 | 279 | the same |
+| 201 / 9 / 8710201 | 210 | bracket of 3 with 2 MDPs: the whole field graph |
+
+A debug-trace census of the 3,000 found 32 brackets paired on the whole
+field graph - top brackets of two to five players that cannot settle on
+their own - costing 5.0 of the 7.7 s spent in all 347 field-graph
+brackets. On 600 / 9 / 8150600 that first bracket spent about 220 ms
+computing the weight of every pair, 100 ms turning them into an edge
+list, 270 ms in `WeightedMatching.new/3` folding that list back into rows,
+300 ms in the cold solve and 30 ms in the stages. Three quarters of it was
+bookkeeping around a solve that has to happen.
+
+No certificate settles these. The direct bracket needs a perfect matching
+inside the bracket (8150600 has none) or a bracket within its MDP rules
+(8710201 has more MDPs than residents); the window needs an even window
+(8150600's is 15); and on 8780400 the certified pass did run and met a
+tie it could not certify, which is the one exit that must go to the
+reference.
+
+### What changed
+
+Only how the first whole-field graph of a round is built; the graph is
+the same.
+
+* **Per player, not per pair.** A pair outside the bracket weighs
+  `reserve * (base*S0 + e(x)*S0 + e(y)*S0 + u(x)*S9 + u(y)*S9 + [reach 1]
+  (S8p + place(x)*S8s) + [soft] S_soft)` (`outside_edge_weight/6`
+  multiplied out). Every term but the soft rung's belongs to one player,
+  so `pair_weigher/8` computes them once per player along with the player's
+  played opponents, forbidden set and absolute colour, and a pair costs
+  three lookups and two additions. Pairs inside the bracket, and a reach-1
+  pair whose score has no C8 place, still go to the exact functions.
+* **Rows, not a list.** `first_field_build/8` builds the matcher's
+  `%{u => %{v => 2w}}` rows directly, and `new/3` takes them as
+  `:adjacency` with `symmetric: true` - the promise that each edge sits in
+  both rows at one weight, which lets the greedy start run the way it does
+  for a graph built from a list. The state is the one the list would have
+  built.
+
+Skipped where the bracket will run on its window (that builds its own
+matchers) and with the transposition tie-break on, whose weigher this does
+not reproduce.
+
+### Results
+
+Same desktop, same positions, base vs branch run back to back, two at a
+time, median of seven:
+
+| position | before ms | after ms | |
+|---|---:|---:|---:|
+| 600 / 9 / 8150600 | 912 | 734 | 1.24x |
+| 400 / 9 / 8780400 | 464 | 372 | 1.25x |
+| 201 / 9 / 8710201 | 210 | 172 | 1.22x |
+| 200 / 9 / 8390200 | 151 | 126 | 1.19x |
+| 200 / 9 / 8090200 | 140 | 108 | 1.30x |
+| 1001 / 9 / 8701001 | 131 | 95 | 1.38x |
+| 200 / 9 / 8320200 | 91 | 68 | 1.33x |
+
+The first three are traced to the whole-field path; the other four moved
+by as much and were not traced. The remaining 33 of the 40 moved within
+noise (0.86-1.18x either way). On 600 / 9 / 8150600, `new/3` went from 244 to
+67 ms; the cold solve is untouched.
+
+Modest, and said so. The rest of the whole-field cost is the solve, which
+is the reference path's own and does not shrink by building faster.
+
+### How it was checked
+
+* While developing, both builds ran side by side on every first field
+  bracket (`base` maps and built matcher states compared with `!=` and a
+  raise) across 900 study positions (seeds 1-30, all ten sizes, rounds 2,
+  5 and 9): equal throughout. The check is not in the shipped code.
+* Whole fuzz tournaments paired by base and branch, every round hashed:
+  4,350 tournaments of 6-150 players (38,943 rounds, seeds 1-30 per size)
+  and 90 of 400-1,001 players (810 rounds), 0 differences. A tournament
+  ending in `NoValidPairingError` counts that round, and ends the same on
+  both.
+* The 40 timed positions: identical results and identical prior rounds.
+* `mix test`, full suite.
+
+### What is left
+
+As "The slow tail" lists it: the pruned walks on 83-93-player brackets
+(0.26-0.33 s), the tied read on 400 / 9 / 8780400, and the cold solve on
+an unsettleable top bracket. Considered and not built: a sparse round
+matcher for that bracket (window edges plus near pairs, the far pairs
+held strictly slack by the duals), which would make the solve cheaper
+but has to keep every certified read, forced-loss check and dual shift
+exact on a graph missing edges. Not worth that risk for a handful of
+positions under a second.
 
 ## The blossom fallback (2026-10-01)
 
