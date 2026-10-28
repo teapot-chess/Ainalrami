@@ -1,43 +1,54 @@
 # Pairing proofs
 
-Every pairing this engine publishes rests on weighted matchings: the
-Dutch rules (C.04.3) are turned into packed integer weights, a
-maximum-weight matching is found, and the bracket is read off it. A wrong
-matcher does not produce an illegal pairing that a legality check would
-catch; it produces a legal-looking pairing that simply is not the best one.
-The corpora in `docs/validation.md` catch that statistically, against other
-engines. This is the other half: a certificate, emitted with the round,
-that each matching the engine computed while pairing it is a maximum-weight
-matching of the graph it was given, checkable by a small program that
-shares no code with the engine.
+Every pairing this engine publishes rests on matchings: the Dutch rules
+(C.04.3) are turned into packed integer weights, a maximum-weight matching
+is found, and the bracket is read off it; along the way unweighted
+matchings answer whether the rest of the field can still be paired. A
+wrong matcher does not produce an illegal pairing that a legality check
+would catch; it produces a legal-looking pairing that simply is not the
+best one. The corpora in `docs/validation.md` catch that statistically,
+against other engines. This is the other half: a proof, written with the
+round, that every matching question the engine asked while pairing it was
+answered correctly, and that the published boards are the answers it read
+- checkable by a small program that shares no code with the engine.
 
     ainalrami round.trf -p pairs.txt --proof=round.proof.jsonl
     elixir tools/verify-proof/verify.exs round.proof.jsonl
 
-or, from the library, `Pairing.pair_next_round(players, proof: fn line -> ... end)`.
+or, from the library, `Pairing.pair_next_round(players, proof: fn text ->
+... end)` (the whole round's proof as one string) or `proof: {:stream, fn
+line -> ... end}` (one line at a time, as the CLI writes it).
 
-This document says exactly what is proven, what is trusted, and what is not
-covered. It was written before most of the code and corrected where the
-code found it wrong; the corrections are marked.
+This document says exactly what is proven, what is trusted, and what is
+not covered. It was written before most of the code and corrected where
+the code found it wrong; the corrections are marked.
 
 ## The claim
 
-A round's certificate proves:
+A round's proof establishes, for the round as paired on the **reference
+path** (below):
 
-> Every weighted-matching solve the engine ran while pairing this round on
-> the **reference path** returned a maximum-weight matching of the graph
-> the certificate lists for it.
-
-and the engine states (not proves; see below) that the reference path
-produced the same pairing as the one it published.
+1. Every weighted-matching question the engine asked was answered with a
+   maximum-weight matching of the graph the proof lists for it.
+2. Every unweighted "can the rest still be paired" question was answered
+   correctly: a "yes" comes with the matching or the augmenting path, a
+   "no" with a Tutte-Berge barrier that rules every matching out.
+3. The published boards are **exactly** the pairs the brackets read off
+   those proven matchings, and no player sits at two boards. That the
+   published round and the reference path agree is a checked fact, not a
+   flag the engine reports.
+4. Each published board is either **forced** - its pair is in every
+   maximum-weight matching of its graph, so no tie-break could have
+   changed it - or one of several optima, chosen by the tie-break. The
+   verifier says which, per board.
 
 It does **not** prove that the pairing is the FIDE pairing, nor that it is
 the one bbpPairings would produce. Those rest on the parts listed under
 "Trusted".
 
-### Proven, solve by solve
+### Proven: weighted questions
 
-For each solve the certificate carries the graph (vertices `0..n-1`,
+For each weighted solve the proof carries the graph (vertices `0..n-1`,
 positive integer edge weights), the matching `M`, and a dual solution in
 the textbook form of Edmonds' matching polytope: a value `y[v] >= 0` per
 vertex and a list of odd vertex sets `S` with values `z[S] >= 0`. The
@@ -66,49 +77,104 @@ Weights and duals are on the matcher's internal doubled scale (`w2 = 2w /
 gcd`); every number in a check is multiplied by the same positive factor,
 so the scale changes nothing and is reported only as `scale`.
 
+**Forced pairs.** The same dual decides which pairs of `M` are in every
+optimum. Complementary slackness holds between this dual and *any*
+maximum-weight matching `M'`: `M'` uses only edges with `rc = 0` and
+covers every vertex with `y > 0`. So when a pair `(u, v)` of `M` has an
+end with `y > 0` whose only `rc = 0` edge is `(u, v)`, every optimum
+contains it. The verifier computes this for every pair a bracket reads
+and counts the published boards that are forced.
+
+### Proven: completability questions
+
+**New in format 2.** The engine also asks an unweighted
+maximum-cardinality matcher whether the rest of a bracket can still be
+paired. Each answer is a `cardinality` record with a witness. With `G` the
+graph (minus the vertices the question excludes, plus the matching's own
+pairs), and `odd(X)` the components of odd size of `G` with the vertex set
+`X` removed, the Tutte-Berge formula says every matching leaves at least
+`|odd(X)| - |X|` vertices exposed, for any `X`: each odd component keeps a
+vertex exposed or sends one into `X`.
+
+| claim | the engine's answer | the witness and what the verifier checks |
+|---|---|---|
+| `maximum` | `M` is a maximum matching | a barrier `X` with `vertices - 2|M| = |odd(X)| - |X|`: the lower bound on exposed vertices, met |
+| `not_exposable` | no maximum matching leaves exactly one vertex over | the same, with that deficiency not 1 |
+| `exposable` | these are exactly the vertices some maximum matching leaves over | `M` maximum with deficiency 1 (barrier as above); the set is exactly the union of `odd(X)`'s components (every maximum matching exposes inside them, by the bound); and each vertex of it has an even alternating path from the exposed root, walked by `parent` links |
+| `augment` | an augmenting path from `root` exists | the path: exposed to exposed, alternating non-`M` / `M` edges of `G`, no vertex twice |
+| `blocked` | none exists: no matching covers `root` and every vertex `M` covers | a barrier `X` such that more components of `odd(X)` lie wholly inside those vertices than `X` has members |
+
+The matcher already computes everything the witnesses need - a failed
+Edmonds search leaves its inner vertices, which are the barrier; the
+union of the outer sets of the searches from each exposed vertex is the
+Gallai-Edmonds `D(G)`, and its neighbourhood is the barrier - so writing
+them down costs a sort and a few lists. A proof's `"uncertified"` map,
+which in format 1 counted these questions (median 2 a round, at most 14),
+is now empty on every round of the corpus below, and the corpus fails a
+round where it is not.
+
+On the reference path the questions asked are `maximum`, `augment` and
+`blocked`. `exposable` and `not_exposable` come from a shortcut of the
+odd-field bootstrap (the matching that fixes the bye's score) which the
+reference path no longer takes: there the bootstrap runs its weighted
+matching, which is certified like any other. The two claims are still
+checked whenever they are recorded, and the tests hand-build both.
+
+### Proven: the published boards
+
+Each time a bracket on the reference path takes pairs from a weighted
+matching, it writes a `read` record: the record id of the matching, and
+for each pair its two vertices and the two players' starting ranks. The
+verifier checks every read pair is a pair of that record's matching (and
+that the record passed), then compares the reads with the round's
+published boards: each published board must have been read, each read
+pair must be published, and no player may appear twice. A bye is the
+player the boards leave over, the same on both sides.
+
+So the round as published - from the fast path, by the direct walk, the
+small-bracket enumeration and the certified shortcuts - is shown equal,
+board for board, to pairs read off proven-optimal matchings. Format 1 had
+the engine compare the two and report `"agrees"`; the flag is still
+written in the `end` record, and the verifier no longer needs it.
+
 ### Trusted
 
 * **The weight function.** That the packed weights faithfully encode
-  C.04.3's criteria, in priority order. The certificate carries the
-  weights; the verifier takes them as given. (See "Where the weights come
-  from" for the stronger option and why it is phased.)
+  C.04.3's criteria, in priority order. The proof carries the weights;
+  the verifier takes them as given. (See "Where the weights come from"
+  for the stronger option and why it is phased.)
 * **The control flow.** Which graphs the engine builds, in which order,
-  and how it reads each matching: the bracket sequence, the eight
-  refinement stages and their weight edits, the pair locks. The proof
-  certifies the answer to each question the engine asked the matcher, not
-  that it asked the right questions.
-* **Ties.** Where several maximum-weight matchings exist, the matcher
-  returns the one its search finds (bbpPairings' order, held to a
-  previous release call by call by `tools/matching_lockstep.exs`). The
-  certificate proves the returned matching is optimal, not that it is the
-  optimum bbpPairings would have returned.
-* **The agreement.** The published pairing comes from the engine's fast
-  path; the certified solves come from pairing the round again on the
-  reference path (below). The certificate's `"agrees": true` is the
-  engine's comparison of the two; the verifier cannot recompute it without
-  a second implementation of the pairing rules. A `false` is reported by
-  the verifier as a FAIL.
-* **Completeness of the record.** That every solve was written down. The
-  verifier checks every solve it is given and cannot see one that is
-  missing.
+  and what it does with each answer: the bracket sequence, the eight
+  refinement stages and their weight edits, the pair locks, and which
+  completability question it asks when. The proof certifies the answer
+  to each question the engine asked, not that it asked the right ones.
+* **The tie-break.** Where several maximum-weight matchings exist, the
+  matcher returns the one its search finds first - bbpPairings' order,
+  held to a previous release call by call by `tools/matching_lockstep.exs`.
+  That choice is **trusted, not checked**; what the proof adds is the
+  line between the two cases: a forced board could not have been
+  otherwise, a board that is not forced was the tie-break's choice. In
+  the corpus below 90-99% of boards are forced, by axis (table under
+  "Evidence"); the rest are where a second engine with a different search
+  order could publish a different, equally optimal round.
+* **Vertex names.** That vertex `u` of a read is the player the record
+  says it is. The verifier sees indices into the engine's field and the
+  engine's statement of whose they are; checking that would mean
+  rebuilding the field order, which is part of the engine.
+* **Colours.** Who has White at each board is decided by C.04.3's colour
+  rules after the pairs are fixed, not by a matching. The verifier
+  compares boards as unordered pairs.
+* **Refusals.** A refused round publishes nothing; its reads and records
+  are checked, but "no legal pairing exists" itself is the engine's word.
+* **Completeness of the record.** That every question was written down.
+  The verifier checks every record it is given and cannot see one that is
+  missing - though a published board that no record backs is now a FAIL.
 
 ### Not covered
 
-These decisions carry no dual certificate and are counted, by name, in the
-certificate's `"uncertified"` map. The verifier prints the counts and does
-not judge them.
-
-* **Completability questions** (`cardinality_maximum`,
-  `cardinality_augment`, `cardinality_exposable`): whether the rest of the
-  field can still be paired, asked of an unweighted maximum-cardinality
-  matcher. A maximum-cardinality matching has a certificate of its own (a
-  Tutte-Berge / Gallai-Edmonds witness), but this matcher does not keep
-  one; adding it is the obvious next step and is not done here. They are
-  few on the reference path: median 2 per round in the corpus below,
-  90th percentile 6, at most 14 (beside an average of 29 certified
-  solves per round).
-* **The direct and small brackets, and the certified shortcuts**, on the
-  path the round is published from. See "Which solves need certificates".
+The engine's own counters of decisions without a record are written to
+the `end` record's `"uncertified"` map. On the reference path it is empty
+on every round of the corpus, which fails any round where it is not.
 
 ## Which solves need certificates
 
@@ -120,11 +186,12 @@ stages that edit weights (stage addends, exchange weights, "prefer the
 higher partner" addends) and solve again, then locks that fix the
 bracket's pairs before the next bracket starts. Completion and look-ahead
 (can the rest still be paired, C.04.3 C4/C8) are part of the packed
-weights. The bye falls out of the last bracket's matching. Every one of
-those solves is a question whose answer the next step reads, so every one
-needs a certificate; the certificate has one entry per solve, in order.
+weights, with the unweighted questions above settling which completions
+are possible. The bye falls out of the last bracket's matching. Every one
+of those solves is a question whose answer the next step reads, so every
+one needs a certificate; the proof has one record per solve, in order.
 
-Three kinds of entry:
+Three kinds of weighted record:
 
 | kind | written when | claim |
 |---|---|---|
@@ -156,22 +223,29 @@ which runs a weighted matching:
 * the **certified shortcuts** do hold per-instance LP certificates
   (`Ainalrami.MatchCertificate`, vertex duals plus a fixed blossom family,
   with a strictness condition that makes the answer unique on a window).
-  They are recorded, as `window` entries, and the verifier checks the
-  window condition too (`test/ainalrami/proof_test.exs` forces the
-  shortcuts on and checks every one). But they cover a handful of reads
-  per round, between direct answers that cover the rest.
+  They can be recorded, as `window` records, and the verifier checks the
+  window condition too (`test/ainalrami/proof_test.exs` records the round
+  as paired with the shortcuts forced on and checks every one). But they
+  cover a handful of reads per round, between direct answers that cover
+  the rest.
 
-So a certificate of the round as published covers almost nothing. The
-proof option therefore pairs each round twice: once exactly as without
-the option (that is the pairing returned and written, byte for byte), and
+So the proof option pairs each round twice: once exactly as without the
+option (that is the pairing returned and written, byte for byte), and
 once on the reference path - `AINALRAMI_CERT=off`, `AINALRAMI_DIRECT=off`,
-`AINALRAMI_NOFAST=1`, set for that call only (`Ainalrami.Proof.reference_flag/1`),
-so every bracket is decided by the refinement stages on the whole field
-graph, each reading a weighted matching. That second pairing is the one
-recorded, and the two are compared. The shortcuts are held to exactly
-this path by the differential corpora (`docs/performance.md`) and by
-`test/ainalrami/direct_bracket_test.exs` on every `mix test`; the proof
-repeats the comparison on the round at hand.
+`AINALRAMI_NOFAST=1`, set for that call only
+(`Ainalrami.Proof.reference_flag/1`), with round one and the odd-field
+bootstrap also taken through their matchings - so every bracket is
+decided by the refinement stages on the whole field graph, each reading a
+weighted matching. That second pairing is the one recorded.
+
+**Format 2.** The direct walk and the small-bracket enumeration still
+have no certificate of their own, and do not need one: what they publish
+is compared, board for board, with the pairs the reference path read off
+proven matchings, by the verifier (above). Where the two paths can
+legitimately differ - a tie the fast path breaks another way - the round
+fails, and that has not happened on the corpus; the shortcuts are held to
+exactly this path by the differential corpora (`docs/performance.md`) and
+`test/ainalrami/direct_bracket_test.exs` as well.
 
 The cost is the reference path's time, which is the engine as it was
 before the shortcuts: see "Overhead".
@@ -190,7 +264,7 @@ verifier needs one rule set.
 
 Two ways for a verifier to get the edge weights:
 
-* **Carried.** The certificate lists them. Simple, and enough to prove the
+* **Carried.** The proof lists them. Simple, and enough to prove the
   matcher right; it trusts the weights.
 * **Recomputed.** The verifier recomputes them from the TRF and the
   published weight rules, so it also checks that the weights encode
@@ -204,8 +278,8 @@ the TRF alone. Only the first solve of a bracket has weights that are
 brackets before it. Recomputing them needs the stage algorithm, which is
 the pairing engine. So:
 
-1. **Carried weights** (this version). Proves the matcher, trusts the
-   weights and the control flow.
+1. **Carried weights** (this version). Proves the matcher and the reads,
+   trusts the weights and the control flow.
 2. **Recomputed bracket weights.** Tag each `solve` with its bracket and
    stage, and specify the initial bracket weight (the packed criteria,
    C.04.3 C1-C21 and the completion rung) as a document a second
@@ -221,69 +295,94 @@ the pairing engine. So:
 
 ## The format
 
-JSON Lines: one line per round (one per pairing group in a grouped event),
-gzipped when the file name ends in `.gz` (the verifier accepts either).
+JSON Lines, **one record per line** (format 2; format 1 put a whole round
+on one line, which at a thousand players was one 280 MB line). A round
+starts with a `round` record and ends with an `end` record; a grouped
+event has one round per pairing group. Gzipped when the file name ends in
+`.gz`; the verifier accepts either.
 
-    {"format": "ainalrami-pairing-proof", "version": 1,
-     "engine": "ainalrami 0.47.0", "path": "reference",
-     "round": {"players": 30, "agrees": true, "pairs": [[26, 10], ...]},
-     "uncertified": {"cardinality_maximum": 1},
-     "solves": [
-       {"id": 0, "kind": "solve", "n": 30, "scale": 1,
-        "graph": {"edges": [[0, 1, "2490..."], ...]},
-        "matching": [[0, 3], ...],
-        "duals": [[0, "2490..."], ...],
-        "sets": [{"vertices": [4, 7, 9], "z": "12"}, ...]},
-       {"id": 1, "kind": "solve", "n": 30, "scale": 1,
-        "graph": {"base": 0, "set": [[3, 8, "0"], [5, 6, "2490..."]]},
-        ...}]}
+    {"type":"round","format":"ainalrami-pairing-proof","version":2,
+     "engine":"ainalrami 0.47.0","path":"reference",
+     "round":{"players":30,"pairs":[[26,10],...,[7,null]]}}
+    {"type":"weighted","id":0,"kind":"solve","n":30,"scale":1,
+     "graph":{"edges":[[0,1,"2490..."],...]},
+     "matching":[[0,3],...],"duals":[[0,"2490..."],...],
+     "sets":[{"vertices":[4,7,9],"z":"12"},...]}
+    {"type":"cardinality","id":1,"claim":"blocked","n":12,
+     "graph":{"edges":[[0,1],...]},"dead":[5],"matching":[[0,1],...],
+     "root":4,"barrier":[2,7]}
+    {"type":"weighted","id":2,"kind":"shift","n":30,
+     "graph":{"base":0,"set":[[3,8,"0"],[5,6,"2490..."]]},...}
+    {"type":"read","solve":2,"pairs":[[0,3,26,10],...]}
+    {"type":"end","uncertified":{},"agrees":true}
 
-* Vertices are the solve's own indices (positions in the field graph),
-  not starting ranks; `round.pairs` gives the published pairing in
-  starting ranks (`null` for a refused round, with the reason).
-* Weights, duals and set values are decimal strings: they are integers of
-  any size (50-170 digits in practice - the criteria are packed into one
-  number).
-* A graph is given in full (`edges`), or as an earlier solve's graph of the
-  same round (`base`) with some edges changed (`set`, weight `"0"` for a
-  removed edge). A round's solves mostly differ by a few edges, and the
-  full graph at 1,000 players has half a million.
+* Vertices are the record's own indices (positions in the field graph),
+  not starting ranks; `read` records give each read pair's players, and
+  `round.pairs` the published pairing in starting ranks (`null` for a
+  bye; `"pairs": null` and a `"refused"` reason for a refused round).
+* Weights, duals and set values are decimal strings: integers of any size
+  (50-170 digits in practice - the criteria are packed into one number).
+* A weighted graph is given in full (`edges`), or as one of the last eight
+  weighted records' graphs (`base`) with some edges changed (`set`, weight
+  `"0"` for a removed edge). A round's solves mostly differ by a few
+  edges, and the full graph at 1,000 players has half a million.
+* A cardinality graph is given in full, or as one of the last four
+  cardinality graphs (`same`), and `dead` lists the vertices the question
+  leaves out.
 * Missing duals are 0; sets with `z = 0` are left out.
-* `window` (on `window` entries only): the vertices the uniqueness claim is
-  made for. The verifier adds two checks: every edge not in `M` with an
+* `window` (on `window` records only): the vertices the uniqueness claim
+  is made for. The verifier adds two checks: every edge not in `M` with an
   end in the window has `rc > 0`, and every edge of `M` at a window vertex
-  has an end with `y > 0` (both ends in the window), or the window end does
-  (one end). Complementary slackness then pins every optimum to `M` on the
-  window.
+  has an end with `y > 0` (both ends in the window), or the window end
+  does (one end). Complementary slackness then pins every optimum to `M`
+  on the window.
+
+The bounded look-back is what lets both sides stream: the engine writes
+each record as it is made and keeps eight graphs to diff against, and
+the verifier reads one line at a time and keeps the same window.
 
 ## The verifier
 
 `tools/verify-proof/verify.exs`: one Elixir script, standard library only
 (Elixir 1.18+ for the built-in `JSON`), no code shared with the engine and
-no `Ainalrami` module referenced. About 530 lines, most of them the checks
-above and their messages; the header comment is the proof.
+no `Ainalrami` module referenced. Its header comment states every record
+and every check and is the proof; the rest is those checks and their
+messages.
 
     elixir tools/verify-proof/verify.exs FILE [--summary]
 
-prints PASS or FAIL per solve, with the reason for a FAIL ("matched edge
-(3, 7) is not tight: reduced cost 2"), and the uncertified counts per
-round; exit code 0 when everything passes, 1 on any FAIL, 2 when the file
-is not a proof.
+prints PASS or FAIL per round, the reason for each FAIL ("matched edge
+(3, 7) is not tight: reduced cost 2", "published pair (12, 31) was not
+read off a proven matching"), the boards published, read and forced, and
+any uncertified counts; exit code 0 when everything passes, 1 on any
+FAIL, 2 when the file is not a proof.
 
-`tools/verify-proof/tamper.exs FILE` takes a round from a proof, checks the
-verifier passes it, then changes one thing at a time - a matched edge's
-weight, a matched vertex's dual, one pair removed from the matching, two
-pairs' partners swapped, a set's dual - and checks the verifier fails each.
-The same tampers run in `test/ainalrami/proof_test.exs`.
+`tools/verify-proof/tamper.exs FILE` checks the verifier passes the file,
+then changes one thing at a time and checks the verifier fails each:
+
+* weighted: a matched edge's weight, a matched vertex's dual, one pair
+  removed from the matching, two pairs' partners swapped, a set's dual;
+* cardinality: a "maximum" matching with a pair removed, an "augment"
+  turned into "blocked" with the path's inner vertices as the barrier, a
+  "blocked" turned into "augment" along a made-up path, a vertex added to
+  or removed from an "exposable" set;
+* published: a read pair moved to another vertex, two published boards'
+  partners swapped, a published board split into two byes.
+
+`test/ainalrami/proof_test.exs` runs the same tampers on engine proofs and
+hand-builds the witnesses the corpus rarely or never produces (a barrier
+that does not meet the bound, a "blocked" where a path exists, an
+exposable set one vertex too big or too small, a board read but not
+published, a player at two boards).
 
 ## Overhead
 
 **Off.** The option changes nothing when it is off: the pairing path is
-the same code with three process-dictionary reads added (one per matcher
-solve, one per shortcut counter, one per engine switch read at a round's
-start), each answering "not recording". Measured, not argued: see
-"Evidence" for the differential against v0.47.0 and the timing table
-below for the off column on both builds.
+the same code with a few process-dictionary reads added (one per matcher
+solve, one per completability question, one per bracket read, one per
+shortcut counter, one per engine switch read at a round's start), each
+answering "not recording". Measured, not argued: see "Evidence" for the
+differential against v0.47.0.
 
 **On.** The round is paired twice (as published, then on the reference
 path while recording), so the cost is the reference path plus the
@@ -291,84 +390,16 @@ recording. The reference path is the expensive half: it is the
 whole-field matcher run for every bracket, which is exactly the work the
 engine's shortcuts exist to avoid.
 
-Per round, averaged over the corpus axes below (one desktop, 16
-schedulers, the axes run several tournaments at once, so the absolute
-times are loaded ones; the ratio is the point):
-
-| axis | players | off | on | proof size, mean (max) |
-|---|---|---|---|---|
-| p_tiny | 4-12 | 1.4 ms | 3.0 ms | 6 KB (19 KB) |
-| p_small | 3-40 | 5.7 ms | 17 ms | 50 KB (225 KB) |
-| p_mixed | 6-150 | 23 ms | 0.70 s | 1.1 MB (5.3 MB) |
-| p_150_300 | 155-295 | 13 ms | 5.4 s | 8.6 MB (17 MB) |
-| p_400_1000 | 414-996 | 20 ms | 81 s (max 328 s) | 90 MB (222 MB) |
-
-The off column against the release without the option, single positions
-(round 6 of a generated event, median of 3-5, nothing else running,
-`tools/proof_bench.exs` run unchanged in both checkouts; the branch was
-run twice to show the noise):
-
-| players | v0.47.0 | branch | branch, again |
-|---|---|---|---|
-| 30 | 4.1 ms | 4.3 ms | 4.1 ms |
-| 100 | 9.2 ms | 9.6 ms | 9.9 ms |
-| 200 | 11.3 ms | 11.4 ms | 11.2 ms |
-| 400 | 21.0 ms | 24.8 ms | 21.8 ms |
-| 600 | 28.3 ms | 28.7 ms | 28.9 ms |
-| 1,000 | 43.2 ms | 47.0 ms | 45.4 ms |
-
-`tools/proof_bench.exs DIR proof` adds the reference path alone and the
-proof for the same positions; at a thousand players a proof took about
-three minutes and 280 MB during development.
-
-Proofs compress well (the graphs repeat from solve to solve); `.gz` takes
-about nine tenths off.
-
-The verifier is linear in the size of the proof: about 2 s for a
-290-player round (3.7 MB) and 4 s for a 422-player round (22 MB),
-both including the BEAM's start-up, and under two minutes for a
-thousand-player round of 280 MB. It keeps a graph only
-while a later solve still names it as a base; keeping them all took 27 GB
-on a thousand-player round and is how that was found.
+PLACEHOLDER-OVERHEAD
 
 ## Evidence
 
-Measured 2026-10-28 on the branch that added the option, on a desktop.
-
-**The option off changes nothing.** `tools/perf_diff.exs corpus small`
-(8 axes x 250 fuzz tournaments: byes, forbidden pairs and acceleration,
-late entrants, point systems, tiny deep fields) paired by v0.47.0 and by
-this branch: 16,589 rounds, 0 differing, 0 missing on either side, 3,912
-of them with their alternatives fingerprinted as well.
-
-**The option on changes nothing either, and every certificate verifies.**
-`tools/proof_corpus.exs` pairs every round of every fuzz tournament with
-the option off and on, compares the two, and runs the verifier on the
-proof in-process:
-
-| axis | tournaments | rounds | players | solves verified | failed | `agrees` false | on != off |
-|---|---|---|---|---|---|---|---|
-| p_tiny | 500 | 3,717 | 4-12 | 36,483 | 0 | 0 | 0 |
-| p_small | 1,500 | 12,758 | 3-40 | 222,771 | 0 | 0 | 0 |
-| p_mixed | 1,000 | 8,940 | 6-150 | 466,234 | 0 | 0 | 0 |
-| p_150_300 | 40 | 200 | 155-295 | 23,909 | 0 | 0 | 0 |
-| p_400_1000 | 12 | 36 | 414-996 | 12,476 | 0 | 0 | 0 |
-| **total** | **3,052** | **25,651** | | **761,873** | **0** | **0** | **0** |
-
-The uncertified completability questions over the same rounds: median 2
-per round, 90th percentile 6, maximum 14.
-
-**The verifier is not a rubber stamp.** `tamper.exs` on a corpus round:
-the untouched round passes; a matched edge's weight, a matched vertex's
-dual, a removed pair and two swapped partners each fail. The test suite
-does the same on ten rounds, checks a hand-made triangle that needs its
-odd set (and fails without it, and with an even set), and a 4-cycle whose
-window claim is refused because the tie is real.
+PLACEHOLDER-EVIDENCE
 
 ## Reproducing
 
     # the corpus: every round paired with the option off and on, compared,
-    # and every certificate checked by the verifier
+    # and every proof checked by the verifier
     MIX_ENV=test mix run tools/proof_corpus.exs DIR
 
     # the off path against a release without the option (run in both)
@@ -378,3 +409,4 @@ window claim is refused because the tie is real.
     # single positions
     mix run tools/proof_bench.exs DIR proof
     elixir tools/verify-proof/verify.exs DIR/1000.jsonl --summary
+    elixir tools/verify-proof/tamper.exs DIR/30.jsonl

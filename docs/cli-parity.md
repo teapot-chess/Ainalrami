@@ -38,7 +38,7 @@ unless said otherwise).
 | `bye_preferences:` `:avoid_soft` | same | `--bye-avoid-soft=` | `XXO bye-avoid-soft` **(new)** | **no** - warned |
 | ... each for chosen rounds | `bye_preference_for_round/2` | `RANK@3-4+7` | `RANK@3-4+7` **(new)** | |
 | `cascade_order: true` | not used (the generator's) | `--cascade-order` **(new)** | - (it is the order of the output, not a fact about the event) | yes |
-| `proof:` (a function given each round's certificate) | not used | `--proof=FILE` **(new)** | - (a certificate about the computation, not a fact about the event) | yes - the pairing is unchanged |
+| `proof:` (a function given each round's proof, or `{:stream, fun}` given it line by line) | not used | `--proof=FILE` **(new)** | - (a certificate about the computation, not a fact about the event) | yes - the pairing is unchanged |
 | players' `:accelerations` - Baku (C.04.7) | `accelerations/3`: Group A `2 * ceil(n/4)`, frozen at round 1 | `--acceleration=baku`, `--baku-group-a=N` **(new for -p/-x/-c)** | `XXA`, `250` | yes |
 | players' `:accelerations` - anything else | acceleration-mode extra points, as `XXA` | `--virtual-points=1-10:1,1,0.5/11:0.5` **(new)** | `XXA`, `250` | **no** - the flag warns |
 | a requested bye (half, zero, full) | a letter in the player's column | `--half-bye=` `--zero-bye=` `--full-bye=` **(new)** | `H` / `Z` / `F` in the column, `240` | yes |

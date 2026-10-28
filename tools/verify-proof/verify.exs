@@ -2,96 +2,134 @@
 #
 #   elixir tools/verify-proof/verify.exs PROOF_FILE [--summary]   (.jsonl, or gzipped)
 #
-# Reads a proof file (JSON Lines: one round certificate per line, as written
-# by `ainalrami input.trf -p out.txt --proof=PROOF_FILE` or by the library's
-# `:proof` option) and checks every solve in it. Prints PASS or FAIL per
-# solve, with the reason for a FAIL, and exits 0 when every solve in the
-# file passes, 1 when any fails, 2 when the file cannot be read as a proof.
-# `--summary` prints one line per round instead of one per solve.
+# Reads a proof (JSON Lines, as written by `ainalrami input.trf -p out.txt
+# --proof=PROOF_FILE` or by the library's `:proof` option) one line at a
+# time and checks every record in it. Prints, per round, PASS or FAIL with
+# the reason for each failing record, and exits 0 when every round passes,
+# 1 when any fails, 2 when the file cannot be read as a proof. `--summary`
+# prints one line per round.
 #
 # This file is deliberately self-contained: Elixir's standard library only,
 # no code shared with the engine, nothing that knows how the engine found
-# its answer. It needs Elixir 1.18 or later (for the built-in JSON module).
+# its answers. It needs Elixir 1.18 or later (for the built-in JSON module).
+# It holds one line at a time plus a bounded window of earlier graphs (see
+# "graph" below), so a proof of any length verifies in bounded memory.
 #
-# ## What a solve claims, and why these checks prove it
+# ## A round
 #
-# A solve is a graph on vertices 0..n-1 with positive integer edge weights
-# w(u, v), a matching M, and a dual solution: a number y[v] >= 0 for every
-# vertex (missing means 0) and a list of vertex sets S, each with a number
-# z[S] >= 0. The claim is that M is a maximum-weight matching of the graph.
+#   {"type": "round", "format": "ainalrami-pairing-proof", "version": 2,
+#    "round": {"players": N, "pairs": [[white, black | null], ...]}}
+#                                         -- or "refused": "why", pairs null
+#   ... "weighted", "cardinality" and "read" records ...
+#   {"type": "end", "uncertified": {...}, "agrees": true}
 #
-# Edmonds' theorem: the convex hull of the matchings of a graph is
+# The round passes when every record passes and the published pairs (two
+# players, not a bye) are exactly the pairs "read" records read off
+# proven-optimal matchings, no player twice. (A refused round publishes
+# nothing; its reads are only checked against their matchings.) What that does and does not establish is in docs/pairing-proofs.md;
+# in one line: each question the engine asked a matcher is answered
+# correctly, and the published pairs are answers it read - which questions
+# it asked, and what the weights encode, are the engine's.
 #
-#   x >= 0,  x(edges at v) <= 1 for every v,
-#   x(edges inside S) <= (|S| - 1) / 2 for every odd set S.
+# ## "weighted": a maximum-weight matching
 #
-# The LP dual of maximising sum(w * x) over that polytope is: minimise
-# sum(y) + sum(z[S] * (|S| - 1) / 2) subject to y >= 0, z >= 0 and, for
-# every edge, y[u] + y[v] + sum(z[S] : S holds u and v) >= w(u, v).
+#   {"type": "weighted", "id": I, "kind": "solve" | "shift" | "window",
+#    "n": N, "scale": G, "graph": GRAPH, "matching": [[u, v], ...],
+#    "duals": [[v, "y"], ...], "sets": [{"vertices": [...], "z": "..."}, ...],
+#    "window": [...]}                                 -- optional
 #
-# The checks:
+#   GRAPH = {"edges": [[u, v, "w"], ...]}             -- the whole graph
+#         | {"base": J, "set": [[u, v, "w"], ...]}    -- weighted record J's
+#                                                        graph, these edges
+#                                                        changed ("0" = gone);
+#                                                        J > I - 8
+#
+# Weights and duals are decimal strings: integers of any size. The claim is
+# that the matching is a maximum-weight matching of the graph. Edmonds: the
+# matchings' convex hull is x >= 0, x(edges at v) <= 1, x(edges inside S)
+# <= (|S| - 1) / 2 for odd S; its LP dual is: minimise sum(y) + sum(z[S] *
+# (|S| - 1) / 2) with y, z >= 0 and y[u] + y[v] + sum(z[S] : S holds u, v)
+# >= w(u, v) on every edge. The checks:
 #
 #   1. M is a matching of the graph: no vertex twice, every pair an edge.
 #   2. y >= 0, z >= 0, every set has an odd number of distinct vertices.
-#   3. Every edge has reduced cost
-#        rc(u, v) = y[u] + y[v] + sum(z[S] : S holds u and v) - w(u, v) >= 0.
-#      (A pair that is not an edge has weight 0, and its reduced cost is a
-#      sum of non-negative numbers.) So (y, z) is dual feasible.
+#   3. Every edge has reduced cost rc(u, v) = y[u] + y[v] + sum(z[S] : S
+#      holds u and v) - w(u, v) >= 0 (a non-edge has weight 0, and its
+#      reduced cost is a sum of non-negative numbers): dual feasible.
 #   4. Every edge of M has rc = 0.
 #   5. Every vertex with y > 0 is matched.
 #   6. Every set with z > 0 holds exactly (|S| - 1) / 2 edges of M.
 #
-# 1-3 make sum(w(M')) <= dual objective for ANY matching M' (weak duality:
-# sum over M' of w <= sum over M' of (y[u] + y[v] + sum z) <= sum(y) +
-# sum(z[S] * (|S| - 1) / 2), using x(edges at v) <= 1 and the odd-set
-# bound). 4-6 are complementary slackness and make the two sides equal for
-# M itself. So no matching weighs more than M. The verifier also computes
-# both sides and checks they are equal, as a cross-check of the arithmetic.
+# 1-3 bound every matching's weight by the dual objective (weak duality);
+# 4-6 are complementary slackness and make M meet the bound. So no matching
+# weighs more than M. Both sides are also computed and compared.
 #
-# Some solves carry a "window": a list of vertices on which the claim is
-# stronger - EVERY maximum-weight matching gives each window vertex the
-# same partner as M (or leaves it exposed when M does). Extra checks:
+# With a "window" the claim is stronger: EVERY maximum-weight matching gives
+# each window vertex the partner M gives it (or leaves it exposed):
 #
 #   7. Every edge NOT in M with an end in the window has rc > 0.
 #   8. For every edge (u, v) of M with u in the window: y[u] > 0 if v is
 #      outside the window, y[u] + y[v] > 0 if v is inside it.
 #
-# Why: complementary slackness holds between any optimal matching M' and
-# this (optimal) dual, so M' uses only edges with rc = 0 and covers every
-# vertex with y > 0. By 7, a window vertex's only possible partner in M'
-# is its partner in M (or none); by 8, "none" would leave a vertex with
-# y > 0 exposed - or both ends of a window pair exposed, one of them with
-# y > 0. An exposed window vertex of M has no edge with rc = 0 at all, so
-# M' leaves it exposed too.
+# (Complementary slackness holds between this dual and ANY optimum M',
+# which so uses only edges with rc = 0 and covers every vertex with y > 0.)
 #
-# ## The format
+# The same argument classifies every pair of M that a "read" names: the
+# pair is FORCED - in every maximum-weight matching of the graph - when one
+# end has y > 0 and no other edge with rc = 0. A pair that is not forced
+# may be one of several optima; which of them the engine took is its
+# tie-break, reported here and not checked.
 #
-# Each line: {"format": "ainalrami-pairing-proof", "version": 1,
-# "round": {...}, "solves": [...], "uncertified": {...}}. A solve:
+# ## "cardinality": an unweighted matching question
 #
-#   {"id": 0, "kind": "solve" | "window", "n": N, "scale": G,
-#    "graph": {"edges": [[u, v, "w"], ...]}            -- the whole graph
-#          or {"base": ID, "set": [[u, v, "w"], ...]}  -- solve ID's graph
-#                                                         with these edges
-#                                                         changed ("0" = gone)
-#    "matching": [[u, v], ...],
-#    "duals": [[v, "y"], ...],
-#    "sets": [{"vertices": [...], "z": "..."}, ...],
-#    "window": [...]}                                  -- optional
+#   {"type": "cardinality", "id": I, "claim": CLAIM, "n": N,
+#    "graph": {"edges": [[u, v], ...]} | {"same": J},  -- J one of the last 4
+#    "dead": [...], "matching": [[u, v], ...], ...}       cardinality graphs
 #
-# Weights and duals are decimal strings: they are integers of any size.
-# "uncertified" counts decisions of the engine that no certificate in the
-# file covers; the verifier reports them and does not judge them.
+# The graph G is the edges among the vertices not "dead", plus the pairs of
+# the matching M (which must avoid the dead). odd(X) is the set of
+# components of odd size of G less the vertices X. Tutte-Berge: every
+# matching leaves at least |odd(X)| - |X| vertices exposed, for any X -
+# each odd component keeps a vertex exposed or matched into X. The claims:
+#
+#   "maximum"       M is a maximum matching. Witness "barrier" X with
+#                   (vertices - 2|M|) = |odd(X)| - |X|: the bound, met.
+#   "not_exposable" the same, and the deficiency (vertices - 2|M|) is not 1:
+#                   no maximum matching leaves exactly one vertex exposed.
+#   "exposable"     the vertices some maximum matching leaves exposed are
+#                   exactly "exposable". M is maximum with deficiency 1
+#                   (barrier X as above) and leaves "root" exposed. Since X
+#                   meets the bound, every maximum matching leaves its
+#                   exposed vertex inside a component of odd(X); the claim
+#                   lists exactly the union of those components; and each
+#                   listed vertex v is shown exposable by an even
+#                   alternating path from root to v (flip it and v is the
+#                   exposed one), walked from v by the "parent" links:
+#                   v, M(v), parent(M(v)), M(parent(M(v))), ... root.
+#   "augment"       there is an M-augmenting path from "root": "path", from
+#                   root (exposed) to an exposed vertex, alternating
+#                   non-M / M edges of G, no vertex twice.
+#   "blocked"       there is none: no matching of G covers every vertex M
+#                   covers and root besides. Witness "barrier" X: more
+#                   components of odd(X) lie wholly inside those vertices
+#                   than X has members, and each needs one of them.
+#
+# ## "read": pairs a bracket read off a weighted matching
+#
+#   {"type": "read", "solve": I, "pairs": [[u, v, player_u, player_v], ...]}
+#
+# Each (u, v) must be a pair of weighted record I's matching; record I must
+# have passed. The players are the engine's name for those vertices.
 
 defmodule VerifyProof do
   @format "ainalrami-pairing-proof"
-  @versions [1]
+  @versions [2]
+  @kept_bases 8
+  @kept_plain 4
 
   def main(args) do
-    {summary?, files} =
-      case Enum.split_with(args, &(&1 == "--summary")) do
-        {flags, files} -> {flags != [], files}
-      end
+    {flags, files} = Enum.split_with(args, &String.starts_with?(&1, "--"))
+    summary? = "--summary" in flags
 
     case files do
       [path] ->
@@ -104,12 +142,16 @@ defmodule VerifyProof do
   end
 
   def verify_file(path, summary?) do
-    case File.read(path) do
-      {:ok, <<0x1F, 0x8B, _::binary>> = gz} ->
-        verify_text(:zlib.gunzip(gz), summary?)
-
-      {:ok, text} ->
-        verify_text(text, summary?)
+    # `:compressed` reads a gzipped file through gunzip and a plain one as
+    # it is.
+    case File.open(path, [:read, :binary, :compressed]) do
+      {:ok, device} ->
+        try do
+          rounds = device |> IO.binstream(:line) |> verify_stream(&print(&1, summary?))
+          totals(rounds)
+        after
+          File.close(device)
+        end
 
       {:error, reason} ->
         IO.puts(:stderr, "cannot read #{path}: #{:file.format_error(reason)}")
@@ -117,58 +159,75 @@ defmodule VerifyProof do
     end
   end
 
-  defp verify_text(text, summary?) do
-    results =
-      text
-      |> String.split("\n")
-      |> Enum.with_index(1)
-      |> Enum.reject(fn {line, _} -> String.trim(line) == "" end)
-      |> Enum.map(fn {line, number} -> {number, verify_line(line)} end)
+  @doc """
+  Every round in `lines` (an enumerable of lines), each passed to
+  `on_round` as it closes; returns the list of round results.
+  """
+  def verify_stream(lines, on_round \\ fn _ -> :ok end) do
+    {done, open} =
+      lines
+      |> Stream.with_index(1)
+      |> Enum.reduce({[], nil}, fn {line, number}, {done, open} ->
+        if String.trim(line) == "" do
+          {done, open}
+        else
+          case step(open, line, number) do
+            {:open, round} ->
+              {done, round}
 
-    Enum.each(results, fn {number, result} -> print(number, result, summary?) end)
-    totals(results)
+            {:closed, result, next} ->
+              on_round.(result)
+              {[result | done], next}
+          end
+        end
+      end)
+
+    done =
+      case open do
+        nil ->
+          done
+
+        round ->
+          result = close(fail(round, "the round has no end record"))
+          on_round.(result)
+          [result | done]
+      end
+
+    Enum.reverse(done)
   end
 
-  defp totals(results) do
-    rounds = length(results)
-    bad_lines = Enum.count(results, fn {_, r} -> match?({:error, _}, r) end)
+  @doc "The rounds of a proof held as text."
+  def verify_text(text), do: text |> String.split("\n") |> verify_stream()
 
-    solves = for {_, {:ok, r}} <- results, s <- r.solves, do: s
-    failed = Enum.count(solves, fn {_, _, verdict} -> verdict != :pass end)
+  defp totals(rounds) do
+    failed = Enum.count(rounds, &(&1.verdict != :pass))
+    records = rounds |> Enum.map(& &1.records) |> Enum.sum()
+    unreadable = Enum.count(rounds, & &1.unreadable)
 
     IO.puts(
-      "#{rounds} round(s), #{length(solves)} solve(s): #{length(solves) - failed} PASS, " <>
-        "#{failed} FAIL" <> if(bad_lines > 0, do: ", #{bad_lines} unreadable line(s)", else: "")
+      "#{length(rounds)} round(s), #{records} record(s): #{length(rounds) - failed} PASS, " <>
+        "#{failed} FAIL"
     )
 
     cond do
-      rounds == 0 -> 2
-      bad_lines > 0 -> 2
+      rounds == [] -> 2
+      unreadable > 0 -> 2
       failed > 0 -> 1
       true -> 0
     end
   end
 
-  defp print(number, {:error, reason}, _summary?) do
-    IO.puts("line #{number}: UNREADABLE - #{reason}")
-  end
-
-  defp print(number, {:ok, r}, summary?) do
-    failed = Enum.count(r.solves, fn {_, _, v} -> v != :pass end)
-    verdict = if failed == 0, do: "PASS", else: "FAIL"
+  defp print(r, summary?) do
+    verdict = if r.verdict == :pass, do: "PASS", else: "FAIL"
+    p = r.pairs
 
     IO.puts(
-      "line #{number}: round of #{r.players} player(s), #{length(r.solves)} solve(s), " <>
-        "#{failed} failed - #{verdict}"
+      "round at line #{r.line}: #{r.players} player(s), #{r.records} record(s), " <>
+        "#{p.published} published pair(s), #{p.read} read off a proven matching, " <>
+        "#{p.forced} of them forced - #{verdict}"
     )
 
-    Enum.each(r.solves, fn
-      {id, kind, :pass} ->
-        unless summary?, do: IO.puts("  solve #{id} (#{kind}): PASS")
-
-      {id, kind, {:fail, reason}} ->
-        IO.puts("  solve #{id} (#{kind}): FAIL - #{reason}")
-    end)
+    for reason <- Enum.reverse(r.failures), do: IO.puts("  FAIL - #{reason}")
 
     if r.uncertified != %{} and not summary? do
       text = r.uncertified |> Enum.map_join(", ", fn {k, v} -> "#{k} x#{v}" end)
@@ -176,141 +235,199 @@ defmodule VerifyProof do
     end
   end
 
-  # ------------------------------------------------------------------ a line
+  # -------------------------------------------------------------- a round
 
-  def verify_line(line) do
-    with {:ok, doc} <- decode(line),
-         :ok <- header(doc),
-         {:ok, solves} <- list_field(doc, "solves") do
-      round = if is_map(doc["round"]), do: doc["round"], else: %{}
-      uncertified = if is_map(doc["uncertified"]), do: doc["uncertified"], else: %{}
+  defp new_round(header, number) do
+    round = if is_map(header["round"]), do: header["round"], else: %{}
 
-      # A graph is kept only while a later solve still names it as its
-      # base: at a thousand players a round holds hundreds of graphs of
-      # half a million edges, and keeping them all costs tens of gigabytes.
-      last_use = last_uses(solves)
+    %{
+      line: number,
+      players: Map.get(round, "players", "?"),
+      published: Map.get(round, "pairs"),
+      refused: Map.get(round, "refused"),
+      records: 0,
+      failures: [],
+      unreadable: false,
+      # weighted id => edges, for the next records to build on
+      graphs: %{},
+      # weighted id => {mate, forced pairs}, for reads
+      matchings: %{},
+      # [{id, plain graph}], newest first
+      plain: [],
+      read: %{},
+      uncertified: %{}
+    }
+  end
 
-      {checked, _graphs} =
-        solves
-        |> Enum.with_index()
-        |> Enum.map_reduce(%{}, fn {solve, at}, graphs ->
-          id = Map.get(solve, "id")
-          kind = Map.get(solve, "kind", "?")
+  defp fail(round, reason), do: %{round | failures: [reason | round.failures]}
 
-          {verdict, edges} =
-            case verify_solve(solve, graphs) do
-              {:ok, edges} -> {:pass, edges}
-              {:fail, reason, edges} -> {{:fail, reason}, edges}
-            end
+  defp step(open, line, number) do
+    case JSON.decode(line) do
+      {:ok, %{"type" => "round"} = doc} ->
+        header_failure =
+          cond do
+            doc["format"] != @format -> "line #{number}: format is not #{@format}"
+            doc["version"] not in @versions -> "line #{number}: unsupported version"
+            true -> nil
+          end
 
-          graphs =
-            graphs
-            |> Map.reject(fn {base, _} -> Map.get(last_use, base, -1) <= at end)
-            |> put_graph(id, edges, Map.get(last_use, id, -1) > at)
+        round = new_round(doc, number)
+        round = if header_failure, do: fail(round, header_failure), else: round
 
-          {{id, kind, verdict}, graphs}
-        end)
-
-      # The engine's own statement that the round it published is the one
-      # the certified computation produced. Not something this file can
-      # check (that would need the engine's pairing rules); a "false" here
-      # means the solves below do not describe the published round.
-      agreement =
-        case round["agrees"] do
-          false ->
-            [
-              {"round", "agreement",
-               {:fail,
-                "the engine reports that the published pairing " <>
-                  "differs from the one the certified solves produced"}}
-            ]
-
-          _ ->
-            []
+        case open do
+          nil -> {:open, round}
+          prev -> {:closed, close(fail(prev, "the round has no end record")), round}
         end
 
-      {:ok,
-       %{
-         players: Map.get(round, "players", "?"),
-         solves: agreement ++ checked,
-         uncertified: uncertified
-       }}
+      {:ok, %{"type" => type} = doc} when open != nil ->
+        case type do
+          "end" ->
+            uncertified = if is_map(doc["uncertified"]), do: doc["uncertified"], else: %{}
+            {:closed, close(%{open | uncertified: uncertified}), nil}
+
+          _ ->
+            {:open, record(open, type, doc, number)}
+        end
+
+      {:ok, _} ->
+        orphan(open, "line #{number}: not a record of a round", number)
+
+      {:error, reason} ->
+        orphan(open, "line #{number}: not JSON (#{inspect(reason)})", number)
     end
   end
 
-  defp put_graph(graphs, _id, nil, _wanted), do: graphs
-  defp put_graph(graphs, id, edges, true), do: Map.put(graphs, id, edges)
-  defp put_graph(graphs, _id, _edges, false), do: graphs
-
-  # base id => index of the last solve that names it
-  defp last_uses(solves) do
-    solves
-    |> Enum.with_index()
-    |> Enum.reduce(%{}, fn
-      {%{"graph" => %{"base" => base}}, at}, acc -> Map.put(acc, base, at)
-      _, acc -> acc
-    end)
+  defp orphan(nil, reason, number) do
+    round = %{new_round(%{}, number) | unreadable: true}
+    {:closed, close(fail(round, reason)), nil}
   end
 
-  defp decode(line) do
-    case JSON.decode(line) do
-      {:ok, doc} when is_map(doc) -> {:ok, doc}
-      {:ok, _} -> {:error, "not a JSON object"}
-      {:error, reason} -> {:error, "not JSON: #{inspect(reason)}"}
+  defp orphan(open, reason, _number), do: {:open, %{fail(open, reason) | unreadable: true}}
+
+  defp close(round) do
+    # Every published pair of two players must be one a bracket read off a
+    # proven matching. A bye is the player the pairs leave over, and a
+    # refused round publishes nothing: neither has a matching to check.
+    pairs = if is_list(round.published), do: round.published, else: []
+
+    {round, published, forced} =
+      Enum.reduce(pairs, {round, 0, 0}, fn
+        [a, b], {round, n, f} when is_integer(a) and is_integer(b) ->
+          case Map.fetch(round.read, {min(a, b), max(a, b)}) do
+            {:ok, forced?} ->
+              {round, n + 1, f + if(forced?, do: 1, else: 0)}
+
+            :error ->
+              {fail(round, "published pair (#{a}, #{b}) was not read off a proven matching"),
+               n + 1, f}
+          end
+
+        [a, nil], acc when is_integer(a) ->
+          acc
+
+        other, {round, n, f} ->
+          {fail(round, "published pair #{inspect(other)} is malformed"), n, f}
+      end)
+
+    read =
+      Enum.count(pairs, fn
+        [a, b] when is_integer(a) and is_integer(b) ->
+          Map.has_key?(round.read, {min(a, b), max(a, b)})
+
+        _ ->
+          false
+      end)
+
+    # And the other way: on a published round, every pair read off a
+    # matching is a published pair, and no player sits at two boards. With
+    # the first direction, the boards ARE the pairs read - the reference
+    # path's pairing, checked rather than reported (the bye is whoever the
+    # boards leave over, the same player on both sides).
+    round =
+      if is_list(round.published) do
+        boards =
+          for [a, b] <- pairs, is_integer(b), into: MapSet.new(), do: {min(a, b), max(a, b)}
+
+        seats = pairs |> List.flatten() |> Enum.filter(&is_integer/1)
+
+        round =
+          round.read
+          |> Map.keys()
+          |> Enum.sort()
+          |> Enum.reject(&MapSet.member?(boards, &1))
+          |> Enum.reduce(round, fn {a, b}, round ->
+            fail(round, "read pair (#{a}, #{b}) was not published")
+          end)
+
+        if length(seats) == length(Enum.uniq(seats)),
+          do: round,
+          else: fail(round, "a player is published at two boards")
+      else
+        round
+      end
+
+    Map.merge(round, %{
+      verdict: if(round.failures == [], do: :pass, else: :fail),
+      pairs: %{published: published, read: read, forced: forced}
+    })
+  end
+
+  defp record(round, type, doc, number) do
+    round = %{round | records: round.records + 1}
+    label = "line #{number} (#{type} #{inspect(doc["id"])}#{kind(doc)})"
+
+    try do
+      case type do
+        "weighted" -> weighted(round, doc, label)
+        "cardinality" -> cardinality(round, doc, label)
+        "read" -> read(round, doc, label)
+        other -> fail(round, "#{label}: unknown record type #{inspect(other)}")
+      end
+    catch
+      {:bad, reason} -> fail(round, "#{label}: malformed: #{reason}")
+      {:fail, reason} -> fail(round, "#{label}: #{reason}")
     end
   end
 
-  defp header(doc) do
-    cond do
-      doc["format"] != @format ->
-        {:error, "format is not #{@format}"}
+  defp kind(%{"kind" => k}), do: ", " <> to_string(k)
+  defp kind(%{"claim" => c}), do: ", " <> to_string(c)
+  defp kind(_), do: ""
 
-      doc["version"] not in @versions ->
-        {:error, "unsupported version #{inspect(doc["version"])}"}
+  # ------------------------------------------------------------ weighted
 
-      true ->
-        :ok
-    end
-  end
+  defp weighted(round, doc, label) do
+    id = doc["id"]
+    unless is_integer(id), do: throw({:bad, "id"})
+    graphs = Map.filter(round.graphs, fn {b, _} -> b > id - @kept_bases end)
 
-  defp list_field(doc, key) do
-    case doc[key] do
-      list when is_list(list) -> {:ok, list}
-      _ -> {:error, "#{key} is not a list"}
-    end
-  end
-
-  # ----------------------------------------------------------------- a solve
-
-  # {:ok, edges} or {:fail, reason, edges | nil}; edges is %{{u, v} => w}
-  # with u < v, kept for later solves that name this one as their base.
-  defp verify_solve(solve, graphs) do
-    case graph(solve, graphs) do
+    case weighted_graph(doc["graph"], graphs) do
       {:ok, edges} ->
-        case check(solve, edges) do
-          :ok -> {:ok, edges}
-          {:fail, reason} -> {:fail, reason, edges}
+        round = %{round | graphs: Map.put(graphs, id, edges)}
+
+        case check_weighted(doc, edges) do
+          {:ok, info} -> %{round | matchings: Map.put(round.matchings, id, info)}
+          {:fail, reason} -> fail(round, "#{label}: #{reason}")
         end
 
       {:fail, reason} ->
-        {:fail, reason, nil}
+        fail(%{round | graphs: graphs}, "#{label}: #{reason}")
     end
-  catch
-    {:bad, reason} -> {:fail, "malformed: #{reason}", nil}
   end
 
-  defp graph(%{"graph" => %{"edges" => list}}, _graphs) when is_list(list) do
-    apply_edges(%{}, list, false)
-  end
+  defp weighted_graph(%{"edges" => list}, _graphs) when is_list(list),
+    do: apply_edges(%{}, list, false)
 
-  defp graph(%{"graph" => %{"base" => base, "set" => list}}, graphs) when is_list(list) do
+  defp weighted_graph(%{"base" => base, "set" => list}, graphs) when is_list(list) do
     case Map.fetch(graphs, base) do
-      {:ok, edges} -> apply_edges(edges, list, true)
-      :error -> {:fail, "base graph #{inspect(base)} is not an earlier solve of this round"}
+      {:ok, edges} ->
+        apply_edges(edges, list, true)
+
+      :error ->
+        {:fail, "base graph #{inspect(base)} is not one of the last #{@kept_bases} records"}
     end
   end
 
-  defp graph(_, _), do: {:fail, "malformed: no graph"}
+  defp weighted_graph(_, _), do: {:fail, "malformed: no graph"}
 
   defp apply_edges(edges, list, zero_ok?) do
     Enum.reduce_while(list, {:ok, edges}, fn item, {:ok, acc} ->
@@ -330,13 +447,13 @@ defmodule VerifyProof do
     end)
   end
 
-  defp check(solve, edges) do
-    n = solve["n"]
+  defp check_weighted(doc, edges) do
+    n = doc["n"]
     unless is_integer(n) and n >= 0, do: throw({:bad, "n"})
 
-    duals = duals!(solve["duals"], n)
-    sets = sets!(solve["sets"], n)
-    {mate, pairs} = matching!(solve["matching"], n)
+    duals = duals!(doc["duals"], n)
+    sets = sets!(doc["sets"], n)
+    {mate, pairs} = matching!(doc["matching"], n, MapSet.new())
 
     # Which sets hold each vertex, for the reduced costs.
     sets_of =
@@ -361,16 +478,24 @@ defmodule VerifyProof do
       y.(u) + y.(v) + shared - w
     end
 
-    window = window!(solve["window"], n)
+    window = window!(doc["window"], n)
 
     with :ok <- check_vertices(edges, n),
          :ok <- check_pairs_are_edges(pairs, edges),
-         :ok <- check_edges(edges, mate, rc, window),
+         {:ok, tight} <- check_edges(edges, mate, rc, window),
          :ok <- check_exposed(duals, mate),
          :ok <- check_sets(sets, pairs),
          :ok <- check_window_pairs(pairs, window, y),
          :ok <- check_objective(pairs, edges, duals, sets) do
-      :ok
+      # Forced: one end has y > 0 (so every optimum matches it) and the
+      # pair is its only tight edge (so every optimum matches it there).
+      forced =
+        for {u, v} <- pairs,
+            (y.(u) > 0 and Map.get(tight, u) == 1) or (y.(v) > 0 and Map.get(tight, v) == 1),
+            into: MapSet.new(),
+            do: {u, v}
+
+      {:ok, {mate, forced}}
     end
   end
 
@@ -393,7 +518,7 @@ defmodule VerifyProof do
       [v, y], acc ->
         v = vertex!(v, n)
         y = int!(y, "dual")
-        if y < 0, do: throw({:bad, "dual of vertex #{v} is negative (#{y})"})
+        if y < 0, do: throw({:fail, "dual of vertex #{v} is negative (#{y})"})
         if Map.has_key?(acc, v), do: throw({:bad, "vertex #{v} has two duals"})
         Map.put(acc, v, y)
 
@@ -415,8 +540,8 @@ defmodule VerifyProof do
 
         cond do
           MapSet.size(members) != length(vs) -> throw({:bad, "a set lists a vertex twice"})
-          rem(length(vs), 2) != 1 -> throw({:bad, "a set has an even number of vertices"})
-          z < 0 -> throw({:bad, "a set dual is negative (#{z})"})
+          rem(length(vs), 2) != 1 -> throw({:fail, "a set has an even number of vertices"})
+          z < 0 -> throw({:fail, "a set dual is negative (#{z})"})
           true -> {members, z}
         end
 
@@ -427,15 +552,19 @@ defmodule VerifyProof do
 
   defp sets!(_, _), do: throw({:bad, "sets is not a list"})
 
-  defp matching!(list, n) when is_list(list) do
+  # {mate, pairs as {low, high}}; no vertex twice, none of `dead`.
+  defp matching!(list, n, dead) when is_list(list) do
     Enum.reduce(list, {%{}, []}, fn
       [u, v], {mate, pairs} ->
         u = vertex!(u, n)
         v = vertex!(v, n)
-        if u == v, do: throw({:bad, "vertex #{u} is matched to itself"})
+        if u == v, do: throw({:fail, "vertex #{u} is matched to itself"})
 
         if Map.has_key?(mate, u) or Map.has_key?(mate, v),
-          do: throw({:bad, "a vertex of (#{u}, #{v}) is matched twice"})
+          do: throw({:fail, "a vertex of (#{u}, #{v}) is matched twice"})
+
+        if MapSet.member?(dead, u) or MapSet.member?(dead, v),
+          do: throw({:fail, "matched pair (#{u}, #{v}) has a dead vertex"})
 
         {mate |> Map.put(u, v) |> Map.put(v, u), [{min(u, v), max(u, v)} | pairs]}
 
@@ -444,7 +573,7 @@ defmodule VerifyProof do
     end)
   end
 
-  defp matching!(_, _), do: throw({:bad, "matching is not a list"})
+  defp matching!(_, _, _), do: throw({:bad, "matching is not a list"})
 
   defp window!(nil, _n), do: MapSet.new()
   defp window!(list, n) when is_list(list), do: MapSet.new(list, &vertex!(&1, n))
@@ -464,30 +593,34 @@ defmodule VerifyProof do
     end
   end
 
+  # :ok with the number of tight edges at each vertex, or the first failure.
   defp check_edges(edges, mate, rc, window) do
-    bad =
-      Enum.find_value(edges, fn {{u, v}, w} ->
-        r = rc.(u, v, w)
-        matched? = Map.get(mate, u) == v
+    Enum.reduce_while(edges, {:ok, %{}}, fn {{u, v}, w}, {:ok, tight} ->
+      r = rc.(u, v, w)
+      matched? = Map.get(mate, u) == v
 
-        cond do
-          r < 0 ->
-            "edge (#{u}, #{v}) violates its dual constraint: reduced cost #{r}"
+      cond do
+        r < 0 ->
+          {:halt, {:fail, "edge (#{u}, #{v}) violates its dual constraint: reduced cost #{r}"}}
 
-          matched? and r != 0 ->
-            "matched edge (#{u}, #{v}) is not tight: reduced cost #{r}"
+        matched? and r != 0 ->
+          {:halt, {:fail, "matched edge (#{u}, #{v}) is not tight: reduced cost #{r}"}}
 
-          not matched? and r == 0 and
-              (MapSet.member?(window, u) or MapSet.member?(window, v)) ->
+        not matched? and r == 0 and
+            (MapSet.member?(window, u) or MapSet.member?(window, v)) ->
+          {:halt,
+           {:fail,
             "edge (#{u}, #{v}) at a window vertex is tight but unmatched: " <>
-              "another optimum could use it"
+              "another optimum could use it"}}
 
-          true ->
-            nil
-        end
-      end)
+        r == 0 ->
+          tight = tight |> Map.update(u, 1, &(&1 + 1)) |> Map.update(v, 1, &(&1 + 1))
+          {:cont, {:ok, tight}}
 
-    if bad, do: {:fail, bad}, else: :ok
+        true ->
+          {:cont, {:ok, tight}}
+      end
+    end)
   end
 
   defp check_exposed(duals, mate) do
@@ -554,9 +687,319 @@ defmodule VerifyProof do
       do: :ok,
       else: {:fail, "matching weight #{primal} differs from the dual objective #{dual}"}
   end
+
+  # ----------------------------------------------------------------- read
+
+  defp read(round, doc, label) do
+    solve = doc["solve"]
+    pairs = doc["pairs"]
+    unless is_list(pairs), do: throw({:bad, "pairs"})
+
+    case Map.fetch(round.matchings, solve) do
+      :error ->
+        fail(round, "#{label}: names #{inspect(solve)}, not a weighted record that passed")
+
+      {:ok, {mate, forced}} ->
+        Enum.reduce(pairs, round, fn
+          [u, v, a, b], round when is_integer(a) and is_integer(b) ->
+            if Map.get(mate, u) == v do
+              key = {min(a, b), max(a, b)}
+              forced? = MapSet.member?(forced, {min(u, v), max(u, v)})
+              %{round | read: Map.update(round.read, key, forced?, &(&1 or forced?))}
+            else
+              fail(round, "#{label}: (#{u}, #{v}) is not a pair of record #{solve}'s matching")
+            end
+
+          other, round ->
+            fail(round, "#{label}: malformed read #{inspect(other)}")
+        end)
+    end
+  end
+
+  # ---------------------------------------------------------- cardinality
+
+  defp cardinality(round, doc, label) do
+    id = doc["id"]
+    n = doc["n"]
+    unless is_integer(n) and n >= 0, do: throw({:bad, "n"})
+
+    {graph, round} =
+      case doc["graph"] do
+        %{"edges" => list} when is_list(list) ->
+          g = plain_graph!(list, n)
+          {g, %{round | plain: Enum.take([{id, g} | round.plain], @kept_plain)}}
+
+        %{"same" => same} ->
+          case List.keyfind(round.plain, same, 0) do
+            {_, g} -> {g, round}
+            nil -> throw({:fail, "graph #{inspect(same)} is not one of the last #{@kept_plain}"})
+          end
+
+        _ ->
+          throw({:bad, "no graph"})
+      end
+
+    case check_cardinality(doc, graph, n) do
+      :ok -> round
+      {:fail, reason} -> fail(round, "#{label}: #{reason}")
+    end
+  end
+
+  # %{v => MapSet of neighbours}
+  defp plain_graph!(list, n) do
+    Enum.reduce(list, %{}, fn
+      [u, v], acc when u != v ->
+        u = vertex!(u, n)
+        v = vertex!(v, n)
+
+        acc
+        |> Map.update(u, MapSet.new([v]), &MapSet.put(&1, v))
+        |> Map.update(v, MapSet.new([u]), &MapSet.put(&1, u))
+
+      other, _ ->
+        throw({:bad, "edge #{inspect(other)}"})
+    end)
+  end
+
+  defp check_cardinality(doc, graph, n) do
+    dead = MapSet.new(list!(doc["dead"] || [], n, "dead"))
+    {mate, pairs} = matching!(doc["matching"] || [], n, dead)
+
+    # The graph asked about: the edges among the living, and M's pairs.
+    graph =
+      graph
+      |> Map.drop(MapSet.to_list(dead))
+      |> Map.new(fn {v, ns} -> {v, MapSet.difference(ns, dead)} end)
+
+    graph =
+      Enum.reduce(pairs, graph, fn {u, v}, g ->
+        g
+        |> Map.update(u, MapSet.new([v]), &MapSet.put(&1, v))
+        |> Map.update(v, MapSet.new([u]), &MapSet.put(&1, u))
+      end)
+
+    live = Enum.reject(0..(n - 1)//1, &MapSet.member?(dead, &1))
+    deficiency = length(live) - 2 * length(pairs)
+
+    case doc["claim"] do
+      "maximum" ->
+        check_barrier_meets(graph, live, doc, deficiency, n)
+
+      "not_exposable" ->
+        with :ok <- check_barrier_meets(graph, live, doc, deficiency, n) do
+          if deficiency == 1,
+            do: {:fail, "the matching leaves exactly one vertex exposed: the claim is false"},
+            else: :ok
+        end
+
+      "exposable" ->
+        check_exposable(graph, live, doc, mate, deficiency, n)
+
+      "augment" ->
+        check_augment(graph, doc, mate, dead, n)
+
+      "blocked" ->
+        check_blocked(graph, live, doc, mate, dead, n)
+
+      other ->
+        {:fail, "unknown claim #{inspect(other)}"}
+    end
+  end
+
+  defp list!(list, n, what) when is_list(list) do
+    vs = Enum.map(list, &vertex!(&1, n))
+    if length(Enum.uniq(vs)) != length(vs), do: throw({:bad, "#{what} lists a vertex twice"})
+    vs
+  end
+
+  defp list!(_, _, what), do: throw({:bad, "#{what} is not a list"})
+
+  # The components of the graph on `live` less `removed`, as lists.
+  defp components(graph, live, removed) do
+    keep = live |> MapSet.new() |> MapSet.difference(removed)
+
+    {comps, _} =
+      Enum.reduce(keep, {[], MapSet.new()}, fn v, {comps, seen} ->
+        if MapSet.member?(seen, v) do
+          {comps, seen}
+        else
+          {comp, seen} = flood([v], MapSet.put(seen, v), [], graph, keep)
+          {[comp | comps], seen}
+        end
+      end)
+
+    comps
+  end
+
+  defp flood([], seen, acc, _graph, _keep), do: {acc, seen}
+
+  defp flood([v | rest], seen, acc, graph, keep) do
+    {next, seen} =
+      graph
+      |> Map.get(v, MapSet.new())
+      |> Enum.reduce({rest, seen}, fn u, {stack, seen} ->
+        if MapSet.member?(keep, u) and not MapSet.member?(seen, u),
+          do: {[u | stack], MapSet.put(seen, u)},
+          else: {stack, seen}
+      end)
+
+    flood(next, seen, [v | acc], graph, keep)
+  end
+
+  defp barrier!(doc, live, n) do
+    x = list!(doc["barrier"] || [], n, "barrier")
+    live_set = MapSet.new(live)
+
+    if not Enum.all?(x, &MapSet.member?(live_set, &1)),
+      do: throw({:fail, "barrier holds a dead vertex"})
+
+    MapSet.new(x)
+  end
+
+  defp check_barrier_meets(graph, live, doc, deficiency, n) do
+    x = barrier!(doc, live, n)
+    odd = graph |> components(live, x) |> Enum.count(&(rem(length(&1), 2) == 1))
+
+    if deficiency == odd - MapSet.size(x),
+      do: :ok,
+      else:
+        {:fail,
+         "barrier of #{MapSet.size(x)} leaves #{odd} odd component(s), which does not show " <>
+           "a matching leaving #{deficiency} exposed is maximum"}
+  end
+
+  defp check_exposable(graph, live, doc, mate, deficiency, n) do
+    root = vertex!(doc["root"], n)
+    claimed = MapSet.new(list!(doc["exposable"] || [], n, "exposable"))
+
+    parent =
+      Enum.reduce(doc["parent"] || [], %{}, fn
+        [v, p], acc when is_integer(v) and is_integer(p) -> Map.put(acc, v, p)
+        other, _ -> throw({:bad, "parent entry #{inspect(other)}"})
+      end)
+
+    x = barrier!(doc, live, n)
+
+    odd_union =
+      graph
+      |> components(live, x)
+      |> Enum.filter(&(rem(length(&1), 2) == 1))
+      |> List.flatten()
+      |> MapSet.new()
+
+    cond do
+      deficiency != 1 ->
+        {:fail, "the matching leaves #{deficiency} vertices exposed, not one"}
+
+      Map.has_key?(mate, root) or root not in live ->
+        {:fail, "root #{root} is not the exposed vertex"}
+
+      check_barrier_meets(graph, live, doc, deficiency, n) != :ok ->
+        check_barrier_meets(graph, live, doc, deficiency, n)
+
+      not MapSet.equal?(claimed, odd_union) ->
+        {:fail,
+         "the exposable set is not the union of the barrier's odd components " <>
+           "(#{MapSet.size(claimed)} claimed, #{MapSet.size(odd_union)} there)"}
+
+      true ->
+        Enum.find_value(claimed, :ok, fn v ->
+          case walk(v, root, mate, parent, graph, MapSet.new([v]), length(live)) do
+            :ok -> nil
+            {:fail, reason} -> {:fail, "vertex #{v}: #{reason}"}
+          end
+        end)
+    end
+  end
+
+  # v, M(v), parent(M(v)), ... must reach root: an even alternating path
+  # that flips to leave v exposed instead of root.
+  defp walk(v, root, _mate, _parent, _graph, _seen, _budget) when v == root, do: :ok
+  defp walk(_v, _root, _mate, _parent, _graph, _seen, 0), do: {:fail, "the path does not end"}
+
+  defp walk(v, root, mate, parent, graph, seen, budget) do
+    with {:ok, m} <- fetch(mate, v, "#{v} is exposed but not the root"),
+         false <- MapSet.member?(seen, m) and {:fail, "the path meets #{m} twice"},
+         {:ok, p} <- fetch(parent, m, "#{m} has no parent"),
+         false <- MapSet.member?(seen, p) and {:fail, "the path meets #{p} twice"},
+         false <- Map.get(mate, m) == p and {:fail, "(#{m}, #{p}) is a matched pair, not a step"},
+         true <- adjacent?(graph, m, p) or {:fail, "(#{m}, #{p}) is not an edge"} do
+      walk(p, root, mate, parent, graph, seen |> MapSet.put(m) |> MapSet.put(p), budget - 1)
+    end
+  end
+
+  defp fetch(map, key, reason) do
+    case Map.fetch(map, key) do
+      {:ok, value} -> {:ok, value}
+      :error -> {:fail, reason}
+    end
+  end
+
+  defp adjacent?(graph, u, v), do: graph |> Map.get(u, MapSet.new()) |> MapSet.member?(v)
+
+  defp check_augment(graph, doc, mate, dead, n) do
+    root = vertex!(doc["root"], n)
+    path = list!(doc["path"] || [], n, "path")
+
+    cond do
+      MapSet.member?(dead, root) or Map.has_key?(mate, root) ->
+        {:fail, "root #{root} is not an exposed living vertex"}
+
+      path == [] or hd(path) != root ->
+        {:fail, "the path does not start at the root"}
+
+      rem(length(path), 2) != 0 ->
+        {:fail, "the path has an even number of edges: it does not augment"}
+
+      Enum.any?(path, &MapSet.member?(dead, &1)) ->
+        {:fail, "the path runs through a dead vertex"}
+
+      Map.has_key?(mate, List.last(path)) ->
+        {:fail, "the path ends at a matched vertex"}
+
+      true ->
+        path
+        |> Enum.chunk_every(2, 1, :discard)
+        |> Enum.with_index()
+        |> Enum.find_value(:ok, fn {[a, b], i} ->
+          cond do
+            not adjacent?(graph, a, b) -> {:fail, "(#{a}, #{b}) is not an edge"}
+            rem(i, 2) == 1 and Map.get(mate, a) != b -> {:fail, "(#{a}, #{b}) should be matched"}
+            rem(i, 2) == 0 and Map.get(mate, a) == b -> {:fail, "(#{a}, #{b}) should not be"}
+            true -> nil
+          end
+        end)
+    end
+  end
+
+  defp check_blocked(graph, live, doc, mate, dead, n) do
+    root = vertex!(doc["root"], n)
+    x = barrier!(doc, live, n)
+    covered = mate |> Map.keys() |> MapSet.new() |> MapSet.put(root)
+
+    inside =
+      graph
+      |> components(live, x)
+      |> Enum.count(fn comp ->
+        rem(length(comp), 2) == 1 and Enum.all?(comp, &MapSet.member?(covered, &1))
+      end)
+
+    cond do
+      MapSet.member?(dead, root) or Map.has_key?(mate, root) ->
+        {:fail, "root #{root} is not an exposed living vertex"}
+
+      inside <= MapSet.size(x) ->
+        {:fail,
+         "barrier of #{MapSet.size(x)} leaves only #{inside} odd component(s) inside the " <>
+           "vertices to cover: an augmenting path is not ruled out"}
+
+      true ->
+        :ok
+    end
+  end
 end
 
-# Run as a script unless loaded as a library (the tamper tests do that).
+# Run as a script unless loaded as a library (the tests do that).
 unless Process.get(:verify_proof_as_library) do
   System.halt(VerifyProof.main(System.argv()))
 end

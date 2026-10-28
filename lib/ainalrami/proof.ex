@@ -1,34 +1,32 @@
 defmodule Ainalrami.Proof do
   @moduledoc """
-  Pairing proofs: a certificate, per round, that every maximum-weight
-  matching the engine computed while pairing it is in fact one.
+  Pairing proofs: a certificate, per round, for every matching question the
+  engine answered while pairing it, and for the pairs it then published.
 
   Asked for with `proof: fun` on `Ainalrami.Pairing.pair_next_round/2` (and
-  `--proof=FILE` on the command line); `fun` is called once per round with
-  the round's certificate, one line of JSON (a binary). Without the option
-  nothing here runs beyond one process-dictionary read per solve, and the
-  pairing is the same either way - the recorder reads the matcher's state,
-  it never writes to it except to tag it with where it was last written
-  down.
+  `--proof=FILE` on the command line). Without the option nothing here runs
+  beyond a process-dictionary read per solve, per cardinality question and
+  per bracket read, and the pairing is the same either way - the recorder
+  reads the matchers' state, it never writes to it except to tag a weighted
+  matcher with where it was last written down.
 
-  What a certificate proves, what it leaves to trust, and the format are in
-  `docs/pairing-proofs.md`. In short: each recorded solve carries its graph
-  (in full, or as the edges changed since an earlier solve of the same
-  round), its matching, and an optimal dual solution in the textbook form of
-  Edmonds' matching polytope - a non-negative dual per vertex and per odd
-  set. Anyone can check that dual against the graph and the matching with a
-  page of code (`tools/verify-proof/verify.exs` is that page), and LP
-  duality does the rest: no matching of the graph weighs more.
+  What a proof proves, what it leaves to trust, and the format are in
+  `docs/pairing-proofs.md`; `tools/verify-proof/verify.exs` checks one. A
+  round is JSON Lines, one record per line, written as it happens:
 
-  Two kinds of record:
-
-    * `"solve"` - the state `Ainalrami.WeightedMatching.solve/1` returned.
-      Claim: the matching is a maximum-weight matching of the graph.
-    * `"window"` - a certificate `Ainalrami.MatchCertificate.certify/5`
-      found (the certified shortcuts). Claim: the matching is a
-      maximum-weight matching, and, when a window is listed, EVERY
-      maximum-weight matching gives each window vertex the partner (or the
-      exposure) this one does.
+    * `"round"` - first: the format, the engine, and the round as published
+      (the pairs, or the refusal).
+    * `"weighted"` - a weighted matching (`Ainalrami.WeightedMatching`) with
+      a dual solution of Edmonds' matching polytope proving it maximum
+      (`"solve"`, `"shift"`), or a certified shortcut's claim that also
+      fixes some vertices' partners in every optimum (`"window"`).
+    * `"cardinality"` - an answer of `Ainalrami.CardinalityMatching` with
+      its witness: a maximum matching with a Tutte-Berge barrier, an
+      augmenting path, a barrier showing there is none, or the vertices a
+      maximum matching can leave exposed with an alternating path to each.
+    * `"read"` - pairs a bracket read off a weighted matching: the record,
+      the vertices, the players.
+    * `"end"` - last: the counts of anything not covered.
 
   Weights and duals are on the matcher's doubled scale: an edge is
   feasible when `y[u] + y[v] + sum(z[S] : S holds u and v) >= w`. Scaling
@@ -38,39 +36,86 @@ defmodule Ainalrami.Proof do
 
   @key {__MODULE__, :recording}
   @format "ainalrami-pairing-proof"
-  @version 1
+  @version 2
+  # A weighted record's graph may be written as changes against one of the
+  # records this many ids back, and no further; a cardinality record's
+  # against one of the last this-many cardinality graphs. The verifier holds
+  # exactly that much, which is what keeps it from holding a round.
   @kept_bases 8
+  @kept_plain 4
 
   @doc "Whether this process is recording a round's proof."
   def recording?, do: Process.get(@key) != nil
 
+  @doc "Whether this process is recording on the reference path."
+  def reference?, do: match?(%{mode: :reference}, Process.get(@key))
+
   @doc """
   Run `fun` with recording on and return `{result, recording}`, where
   `result` is `run/1`'s. `mode` is `:reference` to pair on the reference
-  path while recording (see `reference_flag/1`), or `:as_paired`. A nested
-  call records into the outer recording and returns `nil` for it.
+  path while recording (see `reference_flag/1`), or `:as_paired`. `round`
+  is the `"round"` record's round (players, the published pairs). `emit`,
+  when given, is called with each line as it is written (a binary ending in
+  a newline); otherwise the lines are kept for `finish/2` to return. A
+  nested call records into the outer recording and returns `nil` for it.
   """
-  def capture(fun, mode \\ :reference) do
+  def capture(fun, mode \\ :reference, round \\ %{}, emit \\ nil) do
     if recording?() do
       {run(fun), nil}
     else
-      Process.put(@key, %{
-        token: make_ref(),
-        mode: mode,
-        next: 0,
-        solves: [],
-        bases: %{},
-        last: nil,
-        events: %{}
-      })
+      rec =
+        %{
+          token: make_ref(),
+          mode: mode,
+          next: 0,
+          bases: %{},
+          plain: [],
+          last: nil,
+          events: %{},
+          emit: emit,
+          lines: []
+        }
+        |> write(%{
+          "type" => "round",
+          "format" => @format,
+          "version" => @version,
+          "engine" => "ainalrami " <> engine_version(),
+          "path" => Atom.to_string(mode),
+          "round" => round
+        })
+
+      Process.put(@key, rec)
 
       try do
         result = run(fun)
-        rec = Process.get(@key)
-        {result, rec}
+        {result, Process.get(@key)}
       after
         Process.delete(@key)
       end
+    end
+  end
+
+  @doc """
+  Close a recording with its `"end"` record (`extra` merged in). Returns
+  the round's text when the lines were kept, `:ok` when they were emitted.
+  """
+  def finish(rec, extra \\ %{}) do
+    rec = write(rec, Map.merge(%{"type" => "end", "uncertified" => rec.events}, extra))
+    if rec.emit, do: :ok, else: rec.lines |> Enum.reverse() |> IO.iodata_to_binary()
+  end
+
+  defp write(rec, map), do: write_encoded(rec, encode(map))
+
+  defp write_encoded(rec, iodata) do
+    line = IO.iodata_to_binary([iodata, ?\n])
+
+    case rec.emit do
+      nil ->
+        %{rec | lines: [line | rec.lines]}
+
+      emit ->
+        emit.(line)
+        rec
     end
   end
 
@@ -88,12 +133,11 @@ defmodule Ainalrami.Proof do
   The reference path is the engine with none of its shortcuts: no certified
   shortcuts (`AINALRAMI_CERT=off`), no direct or small brackets
   (`AINALRAMI_DIRECT=off`), and every bracket solved on the whole field
-  graph rather than a local one (`AINALRAMI_NOFAST`). Every bracket is then
-  decided by the refinement stages, each of which reads a weighted
-  matching - which is what makes the round provable solve by solve. The
-  shortcuts are held to this path by the differential corpus and by
-  `test/ainalrami/direct_bracket_test.exs`; the proof repeats the check on
-  the round at hand (`"agrees"`).
+  graph rather than a local one (`AINALRAMI_NOFAST`); round one, too, goes
+  through the brackets (`reference?/0`). Every bracket is then decided by
+  the refinement stages, each of which reads a weighted matching - which is
+  what makes the round provable solve by solve, and the published pairs
+  checkable against what the brackets read.
   """
   def reference_flag(name) do
     case Process.get(@key) do
@@ -111,92 +155,9 @@ defmodule Ainalrami.Proof do
   end
 
   @doc """
-  The round certificate for a finished recording, as one line of JSON (a
-  binary, no newline): `meta` (players, pairs or the refusal) under
-  `"round"`, the solves in the order they ran, and the counts of the
-  engine's decisions that carry no dual certificate.
-
-  Each solve was encoded when it was recorded - a round on a large field
-  records hundreds, and holding them as terms made the recording process's
-  heap, and every garbage collection of it, the largest cost of the proof.
-  """
-  def certificate(rec, meta) do
-    head =
-      IO.iodata_to_binary(
-        encode(%{
-          "format" => @format,
-          "version" => @version,
-          "engine" => "ainalrami " <> engine_version(),
-          "path" => Atom.to_string(rec.mode),
-          "round" => meta,
-          "uncertified" => rec.events
-        })
-      )
-
-    IO.iodata_to_binary([
-      binary_part(head, 0, byte_size(head) - 1),
-      ~s(,"solves":[),
-      rec.solves |> Enum.reverse() |> Enum.intersperse(","),
-      "]}"
-    ])
-  end
-
-  # JSON, for the shapes a certificate holds: maps with string keys, lists,
-  # integers, strings, booleans and nil. Written out here because
-  # `mix.exs` still admits Elixir 1.17, which has no `JSON` module.
-  defp encode(map) when is_map(map) do
-    pairs =
-      map
-      |> Enum.sort()
-      |> Enum.map(fn {k, v} -> [encode(to_string(k)), ?:, encode(v)] end)
-      |> Enum.intersperse(?,)
-
-    [?{, pairs, ?}]
-  end
-
-  defp encode(list) when is_list(list),
-    do: [?[, list |> Enum.map(&encode/1) |> Enum.intersperse(?,), ?]]
-
-  defp encode(n) when is_integer(n), do: Integer.to_string(n)
-  defp encode(true), do: "true"
-  defp encode(false), do: "false"
-  defp encode(nil), do: "null"
-
-  defp encode(s) when is_binary(s) do
-    # Almost every string is a decimal number, which needs no escaping.
-    if plain?(s), do: [?", s, ?"], else: [?", escape(s, []), ?"]
-  end
-
-  defp plain?(<<>>), do: true
-
-  defp plain?(<<c, rest::binary>>) when c >= 0x20 and c < 0x80 and c != ?" and c != ?\\,
-    do: plain?(rest)
-
-  defp plain?(_), do: false
-
-  defp escape(<<>>, acc), do: Enum.reverse(acc)
-  defp escape(<<?", rest::binary>>, acc), do: escape(rest, ["\\\"" | acc])
-  defp escape(<<?\\, rest::binary>>, acc), do: escape(rest, ["\\\\" | acc])
-
-  defp escape(<<c, rest::binary>>, acc) when c < 0x20,
-    do: escape(rest, [:io_lib.format("\\u~4.16.0b", [c]) | acc])
-
-  defp escape(<<c::utf8, rest::binary>>, acc), do: escape(rest, [<<c::utf8>> | acc])
-
-  defp escape(<<c, rest::binary>>, acc),
-    do: escape(rest, [:io_lib.format("\\u~4.16.0b", [c]) | acc])
-
-  defp engine_version do
-    case Application.spec(:ainalrami, :vsn) do
-      nil -> "unknown"
-      vsn -> to_string(vsn)
-    end
-  end
-
-  @doc """
-  Count one of the engine's decisions that no dual certificate covers - a
-  direct walk, a small bracket listed out, a completability question - by
-  its `Ainalrami.Pairing` counter name. A no-op when not recording.
+  Count one of the engine's decisions that no certificate covers, by its
+  `Ainalrami.Pairing` counter name. A no-op when not recording. On the
+  reference path nothing is counted; the shortcuts that count are off.
   """
   def count(key, by \\ 1) do
     case Process.get(@key) do
@@ -215,7 +176,7 @@ defmodule Ainalrami.Proof do
   @doc false
   # `WeightedMatching.solve/1`'s result, recorded; the state comes back
   # tagged with the record's id so the next solve on it can be written as
-  # a change list.
+  # a change list, and a read of it names the record.
   def solved({state, matching}), do: {recorded(state, "solve"), matching}
 
   @doc false
@@ -224,6 +185,82 @@ defmodule Ainalrami.Proof do
   # refinement stages read some of these without a solve in between, so
   # they are claims of their own.
   def shifted(state), do: recorded(state, "shift")
+
+  @doc false
+  # Pairs a bracket read off a weighted matcher's matching: `pairs` as
+  # `{u, v, player_u, player_v}`, `u`/`v` the matcher's vertices. Named by
+  # the record the matcher was last written down as; a matcher that never
+  # was gets `nil`, which the verifier fails.
+  def read(state, pairs) do
+    case Process.get(@key) do
+      nil ->
+        :ok
+
+      rec ->
+        solve =
+          case is_map(state) and Map.get(state, :proof_ref) do
+            {token, id} when token == rec.token -> id
+            _ -> nil
+          end
+
+        rec =
+          write(rec, %{
+            "type" => "read",
+            "solve" => solve,
+            "pairs" => Enum.map(pairs, fn {u, v, a, b} -> [u, v, a, b] end)
+          })
+
+        Process.put(@key, rec)
+        :ok
+    end
+  end
+
+  @doc false
+  # A `CardinalityMatching` answer and its witness: `adj` the graph (a
+  # tuple of neighbour lists), `claim` the record's other fields. A graph
+  # given as a function has no size to write down, so that answer is
+  # counted instead (never on the reference path, whose graphs are tuples).
+  def cardinality(adj, _claim) when is_function(adj, 1), do: count(:cardinality_dense_rows)
+
+  def cardinality(adj, claim) do
+    case Process.get(@key) do
+      nil ->
+        :ok
+
+      rec ->
+        id = rec.next
+
+        {graph, plain} =
+          case Enum.find(rec.plain, fn {g, _} -> g == adj end) do
+            {_, same} ->
+              {%{"same" => same}, rec.plain}
+
+            nil ->
+              {%{"edges" => plain_edges(adj)}, Enum.take([{adj, id} | rec.plain], @kept_plain)}
+          end
+
+        entry =
+          Map.merge(claim, %{
+            "type" => "cardinality",
+            "id" => id,
+            "n" => tuple_size(adj),
+            "graph" => graph
+          })
+
+        rec = write(%{rec | next: id + 1, plain: plain, bases: prune(rec.bases, id)}, entry)
+        Process.put(@key, rec)
+        :ok
+    end
+  end
+
+  defp plain_edges(adj) do
+    for u <- 0..(tuple_size(adj) - 1)//1,
+        v <- adj |> elem(u) |> Enum.uniq() |> Enum.sort(),
+        v > u,
+        do: [u, v]
+  end
+
+  defp prune(bases, id), do: Map.filter(bases, fn {b, _} -> b > id - @kept_bases end)
 
   defp recorded(state, kind) do
     rec = Process.get(@key)
@@ -299,6 +336,58 @@ defmodule Ainalrami.Proof do
     :ok
   end
 
+  # JSON, for the shapes a certificate holds: maps with string keys, lists,
+  # integers, strings, booleans and nil. Written out here because
+  # `mix.exs` still admits Elixir 1.17, which has no `JSON` module.
+  defp encode(map) when is_map(map) do
+    pairs =
+      map
+      |> Enum.sort()
+      |> Enum.map(fn {k, v} -> [encode(to_string(k)), ?:, encode(v)] end)
+      |> Enum.intersperse(?,)
+
+    [?{, pairs, ?}]
+  end
+
+  defp encode(list) when is_list(list),
+    do: [?[, list |> Enum.map(&encode/1) |> Enum.intersperse(?,), ?]]
+
+  defp encode(n) when is_integer(n), do: Integer.to_string(n)
+  defp encode(true), do: "true"
+  defp encode(false), do: "false"
+  defp encode(nil), do: "null"
+
+  defp encode(s) when is_binary(s) do
+    # Almost every string is a decimal number, which needs no escaping.
+    if plain?(s), do: [?", s, ?"], else: [?", escape(s, []), ?"]
+  end
+
+  defp plain?(<<>>), do: true
+
+  defp plain?(<<c, rest::binary>>) when c >= 0x20 and c < 0x80 and c != ?" and c != ?\\,
+    do: plain?(rest)
+
+  defp plain?(_), do: false
+
+  defp escape(<<>>, acc), do: Enum.reverse(acc)
+  defp escape(<<?", rest::binary>>, acc), do: escape(rest, ["\\\"" | acc])
+  defp escape(<<?\\, rest::binary>>, acc), do: escape(rest, ["\\\\" | acc])
+
+  defp escape(<<c, rest::binary>>, acc) when c < 0x20,
+    do: escape(rest, [:io_lib.format("\\u~4.16.0b", [c]) | acc])
+
+  defp escape(<<c::utf8, rest::binary>>, acc), do: escape(rest, [<<c::utf8>> | acc])
+
+  defp escape(<<c, rest::binary>>, acc),
+    do: escape(rest, [:io_lib.format("\\u~4.16.0b", [c]) | acc])
+
+  defp engine_version do
+    case Application.spec(:ainalrami, :vsn) do
+      nil -> "unknown"
+      vsn -> to_string(vsn)
+    end
+  end
+
   defp family_sets(nil), do: []
 
   defp family_sets(anc) do
@@ -319,10 +408,12 @@ defmodule Ainalrami.Proof do
 
   defp record(rec, kind, n, gcd, weight, ref, body) do
     id = rec.next
-    graph = encode_graph(rec, weight, ref)
+    bases = prune(rec.bases, id)
+    graph = encode_graph(%{rec | bases: bases}, weight, ref)
 
     entry =
       %{
+        "type" => "weighted",
         "id" => id,
         "kind" => kind,
         "n" => n,
@@ -350,19 +441,12 @@ defmodule Ainalrami.Proof do
         end
       end)
 
-    # Only the last few graphs are kept to diff against: a state is almost
-    # always re-solved soon after it was last recorded, and every graph kept
-    # is heap the recording process carries through each collection.
-    bases = rec.bases |> Map.put(id, weight) |> Map.delete(id - @kept_bases)
-
-    {id,
-     %{
-       rec
-       | next: id + 1,
-         solves: [IO.iodata_to_binary(encode(entry)) | rec.solves],
-         bases: bases,
-         last: id
-     }}
+    # Written out now, not held: a round on a large field records hundreds
+    # of these, and holding them made the recording process's heap, and
+    # every collection of it, the largest cost of the proof. Only the last
+    # few graphs are kept, to write the next one against.
+    rec = write(%{rec | next: id + 1, bases: Map.put(bases, id, weight), last: id}, entry)
+    {id, rec}
   end
 
   # The graph in full, or as the edges changed against an earlier record of

@@ -7,8 +7,10 @@
 # players), and times pairing round 6 in this VM: median of 5 with the
 # proof off (3 from 400 players up). With `proof`, also the reference path
 # alone (the engine's shortcuts switched off, nothing recorded) once, and
-# the proof once: wall time, solves, bytes, and gzipped bytes; the proof is
-# left in DIR/<players>.jsonl for `tools/verify-proof/verify.exs` to time.
+# the proof once: wall time, weighted and cardinality records, bytes,
+# gzipped bytes, and the VM's peak memory (sampled every 5 ms) for the off
+# pairing and the proof; the proof is left in DIR/<players>.jsonl for
+# `tools/verify-proof/verify.exs` to time.
 #
 # Without `proof` the script touches nothing but `Ainalrami.CLI.run/1`,
 # so it runs unchanged in a checkout of a release without the option: the
@@ -21,6 +23,32 @@ File.mkdir_p!(dir)
 Ainalrami.Log.set_level(:quiet)
 
 median = fn list -> list |> Enum.sort() |> Enum.at(div(length(list), 2)) end
+
+# `fun.()`'s peak `:erlang.memory(:total)`, in MB, after a full collection.
+peak = fn fun ->
+  for pid <- Process.list(), do: :erlang.garbage_collect(pid)
+  me = self()
+
+  sampler =
+    spawn(fn ->
+      loop = fn loop, top ->
+        receive do
+          :stop -> send(me, {:peak, top})
+        after
+          5 -> loop.(loop, max(top, :erlang.memory(:total)))
+        end
+      end
+
+      loop.(loop, :erlang.memory(:total))
+    end)
+
+  fun.()
+  send(sampler, :stop)
+
+  receive do
+    {:peak, top} -> div(top, 1_048_576)
+  end
+end
 ms = fn us -> :erlang.float_to_binary(us / 1000, decimals: 1) end
 
 for players <- [30, 100, 200, 400, 600, 1000] do
@@ -39,7 +67,8 @@ for players <- [30, 100, 200, 400, 600, 1000] do
   runs = if players >= 400, do: 3, else: 5
   pair.([])
   off = median.(for _ <- 1..runs, do: elem(:timer.tc(fn -> pair.([]) end), 0))
-  line = "#{players} players: off #{ms.(off)} ms"
+  off_mb = peak.(fn -> pair.([]) end)
+  line = "#{players} players: off #{ms.(off)} ms (#{off_mb} MB peak)"
 
   line =
     if proof? do
@@ -50,12 +79,14 @@ for players <- [30, 100, 200, 400, 600, 1000] do
 
       file = Path.join(dir, "#{players}.jsonl")
       {on, _} = :timer.tc(fn -> pair.(["--proof=" <> file]) end)
+      on_mb = peak.(fn -> pair.(["--proof=" <> file]) end)
       text = File.read!(file)
-      solves = length(String.split(text, ~s("id":))) - 1
+      count = fn type -> length(String.split(text, ~s("type":"#{type}"))) - 1 end
 
       line <>
-        ", reference path #{ms.(reference)} ms, proof on #{ms.(on)} ms, " <>
-        "#{solves} solves, #{byte_size(text)} bytes (#{byte_size(:zlib.gzip(text))} gzipped)"
+        ", reference path #{ms.(reference)} ms, proof on #{ms.(on)} ms (#{on_mb} MB peak), " <>
+        "#{count.("weighted")} weighted + #{count.("cardinality")} cardinality records, " <>
+        "#{byte_size(text)} bytes (#{byte_size(:zlib.gzip(text))} gzipped)"
     else
       line
     end

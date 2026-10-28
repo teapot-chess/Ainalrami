@@ -9,19 +9,25 @@
 #
 # Writes DIR/<axis>.tsv, one line per round:
 #
-#   axis seed round players off_us on_us bytes solves failed agrees same
-#   uncertified
+#   axis seed round players off_us on_us bytes records failed agrees same
+#   uncertified published read forced
 #
 # `same` is the published pairing with the option on against the one with
-# it off (they must be equal: the option may not change a pairing); `agrees`
-# is the certificate's own statement that the reference path paired the
-# round the same way; `failed` the solves the verifier failed; `uncertified`
-# the engine's decisions in the round no certificate covers. A round with a
-# failed solve, a disagreement or a difference has its certificate kept as
-# DIR/fail-<axis>-<seed>-<round>.jsonl, and the first round of each axis
-# with a solve in it as DIR/sample-<axis>.jsonl, for the verifier run
-# standalone. The tournaments are `Ainalrami.Test.FuzzTournament`'s, as for
-# `tools/perf_diff.exs`, played forward on the pairing with the option off.
+# it off (they must be equal: the option may not change a pairing);
+# `records` the weighted and cardinality records the verifier checked and
+# `failed` the round's failures (any at all fails the round, a published
+# pair not read off a proven matching among them); `agrees` the engine's
+# own statement that the reference path paired the round the same way,
+# kept for comparison - the verifier no longer needs it; `uncertified` the
+# engine's decisions in the round no record covers (must be 0);
+# `published`, `read` and `forced` the round's boards, the ones read off a
+# proven matching, and the ones whose pair is in every optimum. A bad round
+# has its proof kept as DIR/fail-<axis>-<seed>-<round>.jsonl, and the first
+# round of each axis with a weighted record as DIR/sample-<axis>.jsonl, for
+# the verifier run standalone. The proof is taken through the streaming
+# option, one line at a time, as the CLI takes it. The tournaments are
+# `Ainalrami.Test.FuzzTournament`'s, as for `tools/perf_diff.exs`, played
+# forward on the pairing with the option off.
 
 alias Ainalrami.Pairing
 alias Ainalrami.Test.FuzzTournament, as: Fuzz
@@ -106,15 +112,21 @@ defmodule ProofCorpus do
 
         {on_us, on} =
           :timer.tc(fn ->
-            Process.delete(:proof_line)
-            pair(active, opts ++ [proof: &Process.put(:proof_line, &1)])
+            Process.put(:proof_lines, [])
+
+            stream = fn line ->
+              Process.put(:proof_lines, [line, "\n" | Process.get(:proof_lines)])
+            end
+
+            pair(active, opts ++ [proof: {:stream, stream}])
           end)
 
-        line = Process.delete(:proof_line)
-        {verdict, solves, failed, agrees, uncertified} = verify(line)
+        line = :proof_lines |> Process.delete() |> Enum.reverse() |> IO.iodata_to_binary()
+        line = if line == "", do: nil, else: line
+        {verdict, solves, failed, agrees, uncertified, counts} = verify(line)
         same = off == on
 
-        if failed > 0 or not agrees or not same or verdict != :ok do
+        if failed > 0 or not same or verdict != :ok or uncertified > 0 do
           File.write!(Path.join(dir, "fail-#{axis}-#{seed}-#{round}.jsonl"), [line || "", "\n"])
         end
 
@@ -134,7 +146,10 @@ defmodule ProofCorpus do
           failed,
           agrees,
           same,
-          uncertified
+          uncertified,
+          counts.published,
+          counts.read,
+          counts.forced
         ]
 
         case off do
@@ -156,18 +171,21 @@ defmodule ProofCorpus do
     e in Pairing.NoValidPairingError -> {:refused, e.reason}
   end
 
-  defp verify(nil), do: {:missing, 0, 1, false, 0}
+  @none %{published: 0, read: 0, forced: 0}
 
-  defp verify(line) do
-    case VerifyProof.verify_line(line) do
-      {:ok, r} ->
-        failed = Enum.count(r.solves, fn {_, _, v} -> v != :pass end)
-        agrees = String.contains?(line, ~s("agrees":true))
+  defp verify(nil), do: {:missing, 0, 1, false, 0, @none}
+
+  defp verify(text) do
+    agrees = String.contains?(text, ~s("agrees":true))
+
+    case VerifyProof.verify_text(text) do
+      [r] ->
         uncertified = r.uncertified |> Map.values() |> Enum.sum()
-        {:ok, length(r.solves), failed, agrees, uncertified}
+        verdict = if r.verdict == :pass, do: :ok, else: :fail
+        {verdict, r.records, length(r.failures), agrees, uncertified, r.pairs}
 
-      {:error, _} ->
-        {:unreadable, 0, 1, false, 0}
+      _ ->
+        {:unreadable, 0, 1, agrees, 0, @none}
     end
   end
 end
@@ -209,15 +227,17 @@ for {axis, from, count, rounds, conc, knobs} <- ProofCorpus.axes(), only == nil 
   Enum.each(knobs, fn {k, _} -> System.delete_env(k) end)
 
   bad =
-    Enum.count(rows, fn [_, _, _, _, _, _, _, _, failed, agrees, same, _] ->
-      failed > 0 or not agrees or not same
+    Enum.count(rows, fn [_, _, _, _, _, _, _, _, failed, _, same, uncertified | _] ->
+      failed > 0 or not same or uncertified > 0
     end)
 
-  solves = rows |> Enum.map(&Enum.at(&1, 7)) |> Enum.sum()
+  sum = fn i -> rows |> Enum.map(&Enum.at(&1, i)) |> Enum.sum() end
+
   secs = (System.monotonic_time(:millisecond) - started) / 1000
 
   IO.puts(
-    "#{axis}: #{count} tournaments, #{length(rows)} rounds, #{solves} solves verified, " <>
+    "#{axis}: #{count} tournaments, #{length(rows)} rounds, #{sum.(7)} records verified, " <>
+      "#{sum.(12)} boards, #{sum.(13)} read off a proven matching, #{sum.(14)} forced, " <>
       "#{bad} bad round(s) in #{Float.round(secs, 1)} s -> #{out}"
   )
 end
