@@ -44,6 +44,16 @@ defmodule Ainalrami.CardinalityMatching do
   of every pair.
   """
   def maximum(adj) do
+    match = do_maximum(adj)
+
+    # A pairing proof writes the answer down with its witness.
+    if Ainalrami.Proof.recording?(),
+      do: Ainalrami.Proof.cardinality(adj, maximum_claim("maximum", adj, match))
+
+    match
+  end
+
+  defp do_maximum(adj) do
     n = tuple_size(adj)
     match = greedy(adj, n)
 
@@ -53,7 +63,7 @@ defmodule Ainalrami.CardinalityMatching do
       else
         case search(adj, match, v, MapSet.new()) do
           {:path, to, p} -> augment(to, p, match)
-          {:none, _outer} -> match
+          {:none, _outer, _p} -> match
         end
       end
     end)
@@ -74,8 +84,34 @@ defmodule Ainalrami.CardinalityMatching do
   """
   def augment_from(adj, match, root, dead) do
     case search(adj, match, root, dead) do
-      {:path, to, p} -> {:ok, augment(to, p, match)}
-      {:none, _outer} -> :none
+      {:path, to, p} ->
+        if Ainalrami.Proof.recording?() do
+          Ainalrami.Proof.cardinality(adj, %{
+            "claim" => "augment",
+            "matching" => pairs(match),
+            "root" => root,
+            "dead" => Enum.sort(dead),
+            "path" => to |> path_to_root(p, match) |> Enum.reverse()
+          })
+        end
+
+        {:ok, augment(to, p, match)}
+
+      {:none, used, p} ->
+        # The search's inner vertices are a Tutte set: what it reached, less
+        # them, falls apart into one more odd piece than there are of them,
+        # every piece inside what the matching covers plus the root.
+        if Ainalrami.Proof.recording?() do
+          Ainalrami.Proof.cardinality(adj, %{
+            "claim" => "blocked",
+            "matching" => pairs(match),
+            "root" => root,
+            "dead" => Enum.sort(dead),
+            "barrier" => p |> Map.keys() |> Enum.reject(&MapSet.member?(used, &1)) |> Enum.sort()
+          })
+        end
+
+        :none
     end
   end
 
@@ -85,15 +121,78 @@ defmodule Ainalrami.CardinalityMatching do
   """
   def exposable(adj) do
     n = tuple_size(adj)
-    match = maximum(adj)
+    match = do_maximum(adj)
 
     case Enum.reject(0..(n - 1)//1, &is_map_key(match, &1)) do
       [u] ->
-        {:none, outer} = search(adj, match, u, MapSet.new())
+        {:none, outer, p} = search(adj, match, u, MapSet.new())
+
+        # The witness: the matching, the Gallai-Edmonds barrier (the
+        # neighbours of the exposable set outside it), and for each
+        # exposable vertex the even alternating path from `u` that flips to
+        # expose it, as the search's parent links.
+        if Ainalrami.Proof.recording?() do
+          Ainalrami.Proof.cardinality(adj, %{
+            "claim" => "exposable",
+            "matching" => pairs(match),
+            "root" => u,
+            "exposable" => Enum.sort(outer),
+            "barrier" => barrier(adj, outer),
+            "parent" => p |> Enum.sort() |> Enum.map(fn {v, q} -> [v, q] end)
+          })
+        end
+
         {:ok, outer}
 
       _ ->
+        if Ainalrami.Proof.recording?(),
+          do: Ainalrami.Proof.cardinality(adj, maximum_claim("not_exposable", adj, match))
+
         :no
+    end
+  end
+
+  # A maximum matching's witness: the matching and the Gallai-Edmonds
+  # barrier - the neighbours, outside it, of the set some maximum matching
+  # leaves exposed (everything an alternating search from an exposed vertex
+  # reaches at even depth). Removing it leaves exactly as many more odd
+  # pieces than its size as the matching leaves vertices exposed, which is
+  # the Tutte-Berge bound met.
+  defp maximum_claim(claim, adj, match) do
+    exposed = Enum.reject(0..(tuple_size(adj) - 1)//1, &is_map_key(match, &1))
+
+    d =
+      Enum.reduce(exposed, MapSet.new(), fn u, acc ->
+        {:none, outer, _p} = search(adj, match, u, MapSet.new())
+        MapSet.union(acc, outer)
+      end)
+
+    %{"claim" => claim, "matching" => pairs(match), "barrier" => barrier(adj, d)}
+  end
+
+  defp barrier(adj, d) do
+    d
+    |> Enum.flat_map(&neighbours(adj, &1))
+    |> Enum.reject(&MapSet.member?(d, &1))
+    |> Enum.uniq()
+    |> Enum.sort()
+  end
+
+  defp pairs(match) do
+    match
+    |> Enum.filter(fn {u, v} -> u < v end)
+    |> Enum.sort()
+    |> Enum.map(fn {u, v} -> [u, v] end)
+  end
+
+  # The augmenting path `augment/3` flips, from the exposed end found back
+  # to the root.
+  defp path_to_root(v, p, match) do
+    pv = Map.fetch!(p, v)
+
+    case Map.get(match, pv) do
+      nil -> [v, pv]
+      ppv -> [v, pv | path_to_root(ppv, p, match)]
     end
   end
 
@@ -112,7 +211,7 @@ defmodule Ainalrami.CardinalityMatching do
 
   # Edmonds' search from `root`, never entering a vertex of `dead`:
   # `{:path, exposed vertex, parents}` when an augmenting path exists, else
-  # `{:none, outer vertices}`. `base` holds only the vertices a blossom has
+  # `{:none, outer vertices, parents}`. `base` holds only the vertices a blossom has
   # relabelled (`base_of/2`).
   defp search(adj, match, root, dead) do
     st = %{
@@ -139,7 +238,7 @@ defmodule Ainalrami.CardinalityMatching do
   defp bfs(queue, adj, st) do
     case :queue.out(queue) do
       {:empty, _} ->
-        {:none, st.used}
+        {:none, st.used, st.p}
 
       {{:value, v}, queue} ->
         case scan(neighbours(adj, v), v, queue, st) do

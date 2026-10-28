@@ -1,0 +1,243 @@
+# The pairing proofs' corpus: every round of a few thousand fuzz
+# tournaments paired with the proof option off and on, the two pairings
+# compared, and every certificate checked by the independent verifier
+# (`tools/verify-proof/verify.exs`, loaded as a library - it shares no code
+# with the engine, and reads the certificate only as the JSON text the
+# engine wrote).
+#
+#   MIX_ENV=test mix run tools/proof_corpus.exs DIR [AXIS,AXIS...]
+#
+# Writes DIR/<axis>.tsv, one line per round:
+#
+#   axis seed round players off_us on_us bytes records failed agrees same
+#   uncertified published read forced
+#
+# `same` is the published pairing with the option on against the one with
+# it off (they must be equal: the option may not change a pairing);
+# `records` the weighted and cardinality records the verifier checked and
+# `failed` the round's failures (any at all fails the round, a published
+# pair not read off a proven matching among them); `agrees` the engine's
+# own statement that the reference path paired the round the same way,
+# kept for comparison - the verifier no longer needs it; `uncertified` the
+# engine's decisions in the round no record covers (must be 0);
+# `published`, `read` and `forced` the round's boards, the ones read off a
+# proven matching, and the ones whose pair is in every optimum. A bad round
+# has its proof kept as DIR/fail-<axis>-<seed>-<round>.jsonl, and the first
+# round of each axis with a weighted record as DIR/sample-<axis>.jsonl, for
+# the verifier run standalone. The proof is taken through the streaming
+# option, one line at a time, as the CLI takes it. The tournaments are
+# `Ainalrami.Test.FuzzTournament`'s, as for `tools/perf_diff.exs`, played
+# forward on the pairing with the option off.
+
+alias Ainalrami.Pairing
+alias Ainalrami.Test.FuzzTournament, as: Fuzz
+
+Process.put(:verify_proof_as_library, true)
+Code.require_file(Path.join([__DIR__, "verify-proof", "verify.exs"]))
+
+defmodule ProofCorpus do
+  alias Ainalrami.Pairing
+  alias Ainalrami.Test.FuzzTournament, as: Fuzz
+
+  # label, first seed, tournaments, rounds asked, concurrency, knobs
+  @axes [
+    {"p_small", 1, 1500, 9, nil,
+     %{
+       "PAIRING_FUZZ_MIN_PLAYERS" => "4",
+       "PAIRING_FUZZ_MAX_PLAYERS" => "40",
+       "PAIRING_FUZZ_BYE_PCT" => "8",
+       "PAIRING_FUZZ_FORFEIT_PCT" => "5",
+       "PAIRING_FUZZ_WITHDRAW_PCT" => "2",
+       "PAIRING_FUZZ_LATE_PCT" => "5"
+     }},
+    {"p_mixed", 20_001, 1000, 9, nil,
+     %{
+       "PAIRING_FUZZ_MIN_PLAYERS" => "6",
+       "PAIRING_FUZZ_MAX_PLAYERS" => "150",
+       "PAIRING_FUZZ_BYE_PCT" => "5",
+       "PAIRING_FUZZ_FORFEIT_PCT" => "4",
+       "PAIRING_FUZZ_FORBIDDEN_PCT" => "5",
+       "PAIRING_FUZZ_ACCEL" => "mixed",
+       "PAIRING_FUZZ_POINT_SYSTEM" => "mixed",
+       "PAIRING_FUZZ_INITIAL_COLOUR" => "mixed",
+       "PAIRING_FUZZ_RATING_MODE" => "mixed"
+     }},
+    {"p_tiny", 40_001, 500, 9, nil,
+     %{
+       "PAIRING_FUZZ_MIN_PLAYERS" => "4",
+       "PAIRING_FUZZ_MAX_PLAYERS" => "12",
+       "PAIRING_FUZZ_ROUNDS_MAX" => "11",
+       "PAIRING_FUZZ_BYE_PCT" => "10",
+       "PAIRING_FUZZ_FORFEIT_PCT" => "5",
+       "PAIRING_FUZZ_FORBIDDEN_PCT" => "8"
+     }},
+    {"p_150_300", 60_001, 40, 5, 8,
+     %{
+       "PAIRING_FUZZ_MIN_PLAYERS" => "150",
+       "PAIRING_FUZZ_MAX_PLAYERS" => "300",
+       "PAIRING_FUZZ_BYE_PCT" => "4",
+       "PAIRING_FUZZ_FORFEIT_PCT" => "3",
+       "PAIRING_FUZZ_FORBIDDEN_PCT" => "1",
+       "PAIRING_FUZZ_ACCEL" => "mixed"
+     }},
+    {"p_400_1000", 80_001, 12, 3, 2,
+     %{
+       "PAIRING_FUZZ_MIN_PLAYERS" => "400",
+       "PAIRING_FUZZ_MAX_PLAYERS" => "1000",
+       "PAIRING_FUZZ_BYE_PCT" => "3",
+       "PAIRING_FUZZ_FORFEIT_PCT" => "2",
+       "PAIRING_FUZZ_FORBIDDEN_PCT" => "1"
+     }}
+  ]
+
+  def axes, do: @axes
+
+  def tournament(axis, seed, rounds_asked, range, dir) do
+    {rounds, player_count, forbidden, roster} = Fuzz.begin!(seed, rounds_asked, range)
+
+    {lines, _} =
+      Enum.reduce_while(1..rounds, {[], roster}, fn round, {acc, players} ->
+        Fuzz.withdraw_some(round, player_count)
+        {active, pending} = Fuzz.reveal_late_entrants(players, round)
+        active = Fuzz.assign_requested_byes(active)
+
+        opts = [
+          expected_rounds: rounds,
+          forbidden_pairs: forbidden,
+          initial_colour: String.downcase(Fuzz.initial_colour()),
+          point_system: Fuzz.point_system()
+        ]
+
+        {off_us, off} = :timer.tc(fn -> pair(active, opts) end)
+
+        {on_us, on} =
+          :timer.tc(fn ->
+            Process.put(:proof_lines, [])
+
+            stream = fn line ->
+              Process.put(:proof_lines, [line, "\n" | Process.get(:proof_lines)])
+            end
+
+            pair(active, opts ++ [proof: {:stream, stream}])
+          end)
+
+        line = :proof_lines |> Process.delete() |> Enum.reverse() |> IO.iodata_to_binary()
+        line = if line == "", do: nil, else: line
+        {verdict, solves, failed, agrees, uncertified, counts} = verify(line)
+        same = off == on
+
+        if failed > 0 or not same or verdict != :ok or uncertified > 0 do
+          File.write!(Path.join(dir, "fail-#{axis}-#{seed}-#{round}.jsonl"), [line || "", "\n"])
+        end
+
+        if solves > 0 and not File.exists?(Path.join(dir, "sample-#{axis}.jsonl")) do
+          File.write!(Path.join(dir, "sample-#{axis}.jsonl"), [line, "\n"])
+        end
+
+        row = [
+          axis,
+          seed,
+          round,
+          length(active),
+          off_us,
+          on_us,
+          if(line, do: byte_size(line), else: 0),
+          solves,
+          failed,
+          agrees,
+          same,
+          uncertified,
+          counts.published,
+          counts.read,
+          counts.forced
+        ]
+
+        case off do
+          {:ok, pairs} ->
+            next = Fuzz.apply_round(active, pairs, Fuzz.simulate_results(pairs))
+            {:cont, {[row | acc], next ++ pending}}
+
+          _ ->
+            {:halt, {[row | acc], players}}
+        end
+      end)
+
+    Enum.reverse(lines)
+  end
+
+  defp pair(players, opts) do
+    {:ok, Pairing.pair_next_round(players, opts)}
+  rescue
+    e in Pairing.NoValidPairingError -> {:refused, e.reason}
+  end
+
+  @none %{published: 0, read: 0, forced: 0}
+
+  defp verify(nil), do: {:missing, 0, 1, false, 0, @none}
+
+  defp verify(text) do
+    agrees = String.contains?(text, ~s("agrees":true))
+
+    case VerifyProof.verify_text(text) do
+      [r] ->
+        uncertified = r.uncertified |> Map.values() |> Enum.sum()
+        verdict = if r.verdict == :pass, do: :ok, else: :fail
+        {verdict, r.records, length(r.failures), agrees, uncertified, r.pairs}
+
+      _ ->
+        {:unreadable, 0, 1, agrees, 0, @none}
+    end
+  end
+end
+
+[dir | rest] = System.argv()
+File.mkdir_p!(dir)
+
+only =
+  case rest do
+    [list] -> String.split(list, ",", trim: true)
+    _ -> nil
+  end
+
+Ainalrami.Log.set_level(:quiet)
+Application.put_env(:ainalrami, :log_level, :quiet)
+
+for {axis, from, count, rounds, conc, knobs} <- ProofCorpus.axes(), only == nil or axis in only do
+  count = min(count, String.to_integer(System.get_env("PROOF_LIMIT", "1000000")))
+  Enum.each(knobs, fn {k, v} -> System.put_env(k, v) end)
+
+  range =
+    String.to_integer(knobs["PAIRING_FUZZ_MIN_PLAYERS"])..String.to_integer(
+      knobs["PAIRING_FUZZ_MAX_PLAYERS"]
+    )
+
+  out = Path.join(dir, "#{axis}.tsv")
+  started = System.monotonic_time(:millisecond)
+
+  rows =
+    from..(from + count - 1)
+    |> Task.async_stream(fn seed -> ProofCorpus.tournament(axis, seed, rounds, range, dir) end,
+      max_concurrency: conc || System.schedulers_online(),
+      timeout: :infinity,
+      ordered: false
+    )
+    |> Enum.flat_map(fn {:ok, rows} -> rows end)
+
+  File.write!(out, Enum.map(rows, &[Enum.join(&1, "\t"), "\n"]))
+  Enum.each(knobs, fn {k, _} -> System.delete_env(k) end)
+
+  bad =
+    Enum.count(rows, fn [_, _, _, _, _, _, _, _, failed, _, same, uncertified | _] ->
+      failed > 0 or not same or uncertified > 0
+    end)
+
+  sum = fn i -> rows |> Enum.map(&Enum.at(&1, i)) |> Enum.sum() end
+
+  secs = (System.monotonic_time(:millisecond) - started) / 1000
+
+  IO.puts(
+    "#{axis}: #{count} tournaments, #{length(rows)} rounds, #{sum.(7)} records verified, " <>
+      "#{sum.(12)} boards, #{sum.(13)} read off a proven matching, #{sum.(14)} forced, " <>
+      "#{bad} bad round(s) in #{Float.round(secs, 1)} s -> #{out}"
+  )
+end

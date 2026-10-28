@@ -245,6 +245,41 @@ defmodule Ainalrami.WeightedMatching do
   `{state, matching}`; the state carries the solution forward.
   """
   def solve(state) do
+    result = solve_profiled(state)
+
+    # A round being pair-proved writes every solve's answer down
+    # (`Ainalrami.Proof`); otherwise this is one dictionary read.
+    case Process.get({Ainalrami.Proof, :recording}) do
+      nil -> result
+      _ -> Ainalrami.Proof.solved(result)
+    end
+  end
+
+  @doc """
+  A solved state's graph, matching and dual solution, for
+  `Ainalrami.Proof`: `weight` the rows on the doubled scale, `mate`, `dual`
+  the vertex duals, and `blossoms` every non-trivial blossom as
+  `{sorted vertices, z}` - so that an edge's reduced cost is
+  `dual[u] + dual[v] + sum(z : a blossom holds both) - w2`.
+  """
+  def proof_export(state) do
+    blossoms =
+      state.children
+      |> Map.keys()
+      |> Enum.sort()
+      |> Enum.map(fn b -> {Enum.sort(blossom_vertices(state, b)), Map.get(state.dual, b, 0)} end)
+
+    %{
+      n: state.n,
+      gcd: state.gcd,
+      weight: state.weight,
+      mate: state.mate,
+      dual: Map.take(state.dual, Enum.to_list(0..(state.n - 1)//1)),
+      blossoms: blossoms
+    }
+  end
+
+  defp solve_profiled(state) do
     if Profile.on?() do
       Process.put(:wm_stages, 0)
       Process.put(:wm_grow_total, 0)
@@ -574,7 +609,11 @@ defmodule Ainalrami.WeightedMatching do
           end) and
           Enum.all?(shifts, fn {v, d} -> d >= 0 or row_feasible?(state, v) end)
 
-      if ok?, do: {:ok, state}, else: :error
+      cond do
+        not ok? -> :error
+        Process.get({Ainalrami.Proof, :recording}) == nil -> {:ok, state}
+        true -> {:ok, Ainalrami.Proof.shifted(state)}
+      end
     end
   end
 

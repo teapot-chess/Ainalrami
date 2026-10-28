@@ -550,7 +550,79 @@ defmodule Ainalrami.Pairing do
   # the round itself. `:auto` lets a round nobody has played in take
   # `pair_round_one/1`'s shortcut; `:later` is `pair_later_round/2`'s
   # contract, the bracket cascade whatever the round.
+  # `:proof` - a function called with the round's proof (`Ainalrami.Proof`),
+  # or `{:stream, fun}` to have it called with each line as it is written.
+  # The option is taken off before pairing, so the engine underneath sees
+  # exactly the options it would without it.
+  # Options that are not a keyword list go straight through, so the input
+  # check refuses them in its own words rather than Keyword.pop in its.
   defp pair_entry(players, opts, path) do
+    popped = if Keyword.keyword?(opts), do: Keyword.pop(opts, :proof), else: {nil, opts}
+
+    case popped do
+      {nil, opts} -> pair_entry_unproved(players, opts, path)
+      {sink, opts} when is_function(sink, 1) -> pair_entry_proved(players, opts, path, sink)
+      {{:stream, _} = sink, opts} -> pair_entry_proved(players, opts, path, sink)
+      {other, _} -> raise ArgumentError, ":proof takes a 1-arity function, got #{inspect(other)}"
+    end
+  end
+
+  # The round is paired exactly as without the option, and the answer
+  # returned is that one. The proof comes from pairing it a second time on
+  # the reference path (`Ainalrami.Proof.reference_flag/1`: no certified
+  # shortcuts, no direct brackets, every bracket on the whole field graph),
+  # where every bracket decision is read off a weighted matching. The
+  # published pairs go first in the proof, and every one of them has to
+  # turn up among the pairs the reference path read off a proven-optimal
+  # matching: the verifier checks that, not this.
+  defp pair_entry_proved(players, opts, path, sink) do
+    result = Ainalrami.Proof.run(fn -> pair_entry_unproved(players, opts, path) end)
+
+    emit =
+      case sink do
+        {:stream, fun} when is_function(fun, 1) ->
+          fun
+
+        {:stream, other} ->
+          raise ArgumentError, ":proof's stream takes a 1-arity function, got #{inspect(other)}"
+
+        _ ->
+          nil
+      end
+
+    round = Map.put(outcome_meta(result), "players", length(players))
+
+    {reference, rec} =
+      Ainalrami.Proof.capture(
+        fn -> pair_entry_unproved(players, opts, path) end,
+        :reference,
+        round,
+        emit
+      )
+
+    if rec do
+      # The engine's own comparison, for the record; the verifier does not
+      # take its word for it.
+      text = Ainalrami.Proof.finish(rec, %{"agrees" => same_outcome?(result, reference)})
+      if emit == nil, do: sink.(text)
+    end
+
+    case result do
+      {:ok, pairs} -> pairs
+      {:raised, e, stack} -> reraise e, stack
+    end
+  end
+
+  defp same_outcome?({:ok, a}, {:ok, b}), do: a == b
+  defp same_outcome?({:raised, a, _}, {:raised, b, _}), do: a.__struct__ == b.__struct__
+  defp same_outcome?(_, _), do: false
+
+  defp outcome_meta({:ok, pairs}), do: %{"pairs" => Enum.map(pairs, &Tuple.to_list/1)}
+
+  defp outcome_meta({:raised, e, _}),
+    do: %{"pairs" => nil, "refused" => Exception.message(e)}
+
+  defp pair_entry_unproved(players, opts, path) do
     validate_input!(players, opts)
 
     if Ainalrami.ByePreference.active?(opts) do
@@ -692,7 +764,8 @@ defmodule Ainalrami.Pairing do
       # `pair_later_round/2` asks for the cascade whatever the round, and
       # gets it.
       pairs =
-        if path == :auto and Enum.all?(active, &(&1.games == [])) and
+        if path == :auto and not Ainalrami.Proof.reference?() and
+             Enum.all?(active, &(&1.games == [])) and
              is_nil(Process.get(@forbidden_key)) and
              is_nil(Process.get(@soft_key)) and is_nil(Process.get(@bye_excluded_key)) and
              not Enum.any?(active, &(acceleration_at(&1, played) != 0.0)) do
@@ -2094,7 +2167,9 @@ defmodule Ainalrami.Pairing do
       )
     end
 
-    :ok
+    # The same counters go into a pairing proof as the decisions it does
+    # not cover with a dual certificate (`Ainalrami.Proof`).
+    Ainalrami.Proof.count(key, by)
   end
 
   # `fun.()`, its time added to the counter `key` (ms) when counting.
@@ -2739,11 +2814,16 @@ defmodule Ainalrami.Pairing do
     Process.delete(@env_direct_plain_key)
   end
 
-  defp read_env_flag(name), do: System.get_env(name) || :unset
+  defp read_env_flag(name) do
+    case Ainalrami.Proof.reference_flag(name) do
+      nil -> System.get_env(name) || :unset
+      value -> value
+    end
+  end
 
   defp env_flag(key, name) do
     case Process.get(key) do
-      nil -> System.get_env(name)
+      nil -> Ainalrami.Proof.reference_flag(name) || System.get_env(name)
       :unset -> nil
       value -> value
     end
@@ -8977,7 +9057,39 @@ defmodule Ainalrami.Pairing do
 
   ## ---------- carry forward (dutch.cpp 1601-1649) ----------
 
+  # A pairing proof's record of the pairs this bracket is about to publish
+  # (`collect_bracket/1`'s own test, read the same way) and where they came
+  # from: the matcher the bracket's matching was read off, its vertices, the
+  # players. The verifier holds each to that matcher's proven matching.
+  defp proof_read(st) do
+    pairs =
+      for i <- 0..(min(st.nsgb, st.m) - 1)//1,
+          MapSet.member?(st.matched, i),
+          p = partner(st, i),
+          p != i and p < st.nsgb and i < p,
+          do: {i, p}
+
+    {matcher, vertex} =
+      case st.mode do
+        :field ->
+          {matcher, field_index, _} = Process.get(@round_matcher_key)
+          {matcher, field_positions(st, field_index)}
+
+        _ ->
+          {Map.get(st, :wm), & &1}
+      end
+
+    Ainalrami.Proof.read(
+      matcher,
+      Enum.map(pairs, fn {i, p} ->
+        {vertex.(i), vertex.(p), elem(st.arr, i).rank, elem(st.arr, p).rank}
+      end)
+    )
+  end
+
   defp collect_bracket(st) do
+    if Ainalrami.Proof.recording?(), do: proof_read(st)
+
     {pairs, carried, sgb} =
       Enum.reduce(0..(st.m - 1)//1, {[], [], 0}, fn i, {pairs, carried, sgb} ->
         # Read only where the answer depends on it: a player who is not
@@ -9299,6 +9411,15 @@ defmodule Ainalrami.Pairing do
       result
     end
 
+    # A proof's reference path takes the matching every time: the
+    # shortcuts below are arguments the engine makes to itself, and a
+    # proof has no record type for "trust me, I did the algebra".
+    if Ainalrami.Proof.reference?(),
+      do: search.(),
+      else: shortcut_bootstrap(arr, n, blocked, ranks, prefs, vertex, top, checked, search)
+  end
+
+  defp shortcut_bootstrap(arr, n, blocked, ranks, prefs, vertex, top, checked, search) do
     case certain_bootstrap(arr, n, blocked, ranks, prefs, vertex, top) do
       {:ok, result} ->
         result

@@ -134,7 +134,7 @@ defmodule Ainalrami.CLI do
                    groups soft-pairs soft-position team-forbidden team-soft-pairs
                    forbidden bye-exclude virtual-points baku-group-a half-bye zero-bye
                    full-bye absent-teams judge points max-upfloater-sets explain-limit
-                   cap-rounds max-candidates dialect)
+                   cap-rounds max-candidates dialect proof)
 
   # `-g` options that only an individual tournament has, and the ones only
   # a team event has (`--team=...`); each refused for the other.
@@ -636,6 +636,7 @@ defmodule Ainalrami.CLI do
     "full-bye" => [:pair, :explain],
     "absent-teams" => [:pair, :explain],
     "cascade-order" => [:pair],
+    "proof" => [:pair],
     "judge" => [:explain],
     "bye-alternatives" => [:explain],
     "float-alternatives" => [:explain],
@@ -672,7 +673,7 @@ defmodule Ainalrami.CLI do
   # Flags a file of the wrong kind cannot use.
   @individual_only ~w(forbidden bye-exclude virtual-points baku-group-a acceleration judge
                       bye-alternatives float-alternatives alternative-pairs max-candidates
-                      cascade-order)
+                      cascade-order proof)
   @team_swiss_only ~w(team-type score secondary max-upfloater-sets explain-limit
                       team-forbidden team-soft-pairs)
   @bye_flags ~w(half-bye zero-bye full-bye absent-teams)
@@ -1764,8 +1765,22 @@ defmodule Ainalrami.CLI do
 
       report_extensions(parsed)
       {extra, prefs} = organiser_options(parsed, flags, prefs)
+      proof = text_option(flags, "proof")
+      proof_file = if proof, do: open_proof(proof)
 
-      case pair_next_round(parsed.players, parsed.tournament, prefs, extra) do
+      extra =
+        if proof,
+          do: extra ++ [proof: {:stream, &write_proof_line(proof_file, &1)}],
+          else: extra
+
+      result =
+        try do
+          pair_next_round(parsed.players, parsed.tournament, prefs, extra)
+        after
+          if proof, do: close_proof(proof, proof_file)
+        end
+
+      case result do
         {:ok, pairs, _opts} ->
           write_pairs(pairs, positional_rest)
           0
@@ -2565,6 +2580,39 @@ Round #{round_number} - #{boards} board#{plural(boards)} over " <>
     end
 
     {:ok, EventFormat.pair_next_round(players, opts), opts}
+  end
+
+  # `--proof=FILE` (`Ainalrami.Proof`): the proof of every round the
+  # pairing produced - one, or one per pairing group - as JSON Lines,
+  # written as the engine records it rather than gathered first: a large
+  # field's proof runs to hundreds of megabytes, and the weights are packed
+  # criteria of 50-170 digits, so a `.gz` name gets it gzipped on the way
+  # (about 15x smaller). A round paired without the Dutch engine (a second
+  # leg, a round robin) has no matching to prove and gets none.
+  defp open_proof(path) do
+    modes = [:write, :binary] ++ if(String.ends_with?(path, ".gz"), do: [:compressed], else: [])
+    Process.put(:ainalrami_cli_proof_rounds, 0)
+    File.open!(path, modes)
+  end
+
+  defp write_proof_line(file, line) do
+    if String.contains?(line, ~s("type":"round")),
+      do: Process.put(:ainalrami_cli_proof_rounds, Process.get(:ainalrami_cli_proof_rounds) + 1)
+
+    IO.binwrite(file, line)
+  end
+
+  defp close_proof(path, file) do
+    File.close(file)
+    rounds = Process.delete(:ainalrami_cli_proof_rounds) || 0
+
+    if rounds == 0 do
+      Log.warn(
+        "--proof: no round here was paired by the Dutch engine, so there is nothing to prove"
+      )
+    end
+
+    Log.detail("proof: #{rounds} round(s) written to #{path}")
   end
 
   defp format?(opts), do: opts[:match_format] == true or (opts[:groups] || []) != []
@@ -3506,6 +3554,12 @@ Round #{round_number} - #{boards} board#{plural(boards)} over " <>
                                 in the round being paired; zero = absent
       --cascade-order           (-p) boards in the order the brackets were
                                 paired, not C.04.2 3.6's
+      --proof=FILE[.gz]         (-p) also write a proof per round: every
+                                matching the engine solved is optimal,
+                                every completability answer holds, and
+                                every published pair came off one of
+                                them; JSON Lines, check it with
+                                tools/verify-proof/verify.exs
 
     Bye preferences (-p and -x; an organiser's rule, NOT FIDE - a round they
     change is not a pure FIDE pairing, and a warning says so on stderr):
