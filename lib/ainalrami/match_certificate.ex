@@ -115,6 +115,7 @@ defmodule Ainalrami.MatchCertificate do
   """
   def certify(weight, mate, window?, hint, opts \\ []) do
     family = Keyword.get(opts, :family)
+    original = weight
 
     with :ok <- check_matching(weight, mate),
          :ok <- check_family(family, mate) do
@@ -123,9 +124,27 @@ defmodule Ainalrami.MatchCertificate do
       exposed = Enum.reject(live, &is_map_key(mate, &1))
       matched = Enum.filter(live, &is_map_key(mate, &1))
       h = tight_hint(weight, mate, matched, hint)
+
       search(weight, mate, window?, live, matched, exposed, h, opts)
+      |> prove(original, mate, window?, live, family, opts)
     end
   end
+
+  # A round being pair-proved (`Ainalrami.Proof`) writes every certificate
+  # found here down, on the weights it was asked about; the window is listed
+  # only when the search was strict on it.
+  defp prove({:ok, cert} = ok, weight, mate, window?, live, family, opts) do
+    if Ainalrami.Proof.recording?() do
+      window =
+        if Keyword.get(opts, :strict, true), do: Enum.filter(live, window?), else: []
+
+      Ainalrami.Proof.certified(weight, mate, window, cert, family)
+    end
+
+    ok
+  end
+
+  defp prove(other, _weight, _mate, _window?, _live, _family, _opts), do: other
 
   # ## A fixed family of odd sets
   #

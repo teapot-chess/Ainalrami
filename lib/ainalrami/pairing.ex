@@ -550,7 +550,59 @@ defmodule Ainalrami.Pairing do
   # the round itself. `:auto` lets a round nobody has played in take
   # `pair_round_one/1`'s shortcut; `:later` is `pair_later_round/2`'s
   # contract, the bracket cascade whatever the round.
+  # `:proof` - a function called with the round's certificate
+  # (`Ainalrami.Proof`). The option is taken off before pairing, so the
+  # engine underneath sees exactly the options it would without it.
+  # Options that are not a keyword list go straight through, so the input
+  # check refuses them in its own words rather than Keyword.pop in its.
   defp pair_entry(players, opts, path) do
+    popped = if Keyword.keyword?(opts), do: Keyword.pop(opts, :proof), else: {nil, opts}
+
+    case popped do
+      {nil, opts} -> pair_entry_unproved(players, opts, path)
+      {sink, opts} when is_function(sink, 1) -> pair_entry_proved(players, opts, path, sink)
+      {other, _} -> raise ArgumentError, ":proof takes a 1-arity function, got #{inspect(other)}"
+    end
+  end
+
+  # The round is paired exactly as without the option, and the answer
+  # returned is that one. The proof comes from pairing it a second time on
+  # the reference path (`Ainalrami.Proof.reference_flag/1`: no certified
+  # shortcuts, no direct brackets, every bracket on the whole field graph),
+  # where every bracket decision is read off a weighted matching; the
+  # certificate says whether the two pairings agree.
+  defp pair_entry_proved(players, opts, path, sink) do
+    result = Ainalrami.Proof.run(fn -> pair_entry_unproved(players, opts, path) end)
+
+    {reference, rec} =
+      Ainalrami.Proof.capture(fn -> pair_entry_unproved(players, opts, path) end, :reference)
+
+    if rec do
+      meta =
+        Map.merge(
+          %{"players" => length(players), "agrees" => same_outcome?(result, reference)},
+          outcome_meta(result)
+        )
+
+      sink.(Ainalrami.Proof.certificate(rec, meta))
+    end
+
+    case result do
+      {:ok, pairs} -> pairs
+      {:raised, e, stack} -> reraise e, stack
+    end
+  end
+
+  defp same_outcome?({:ok, a}, {:ok, b}), do: a == b
+  defp same_outcome?({:raised, a, _}, {:raised, b, _}), do: a.__struct__ == b.__struct__
+  defp same_outcome?(_, _), do: false
+
+  defp outcome_meta({:ok, pairs}), do: %{"pairs" => Enum.map(pairs, &Tuple.to_list/1)}
+
+  defp outcome_meta({:raised, e, _}),
+    do: %{"pairs" => nil, "refused" => Exception.message(e)}
+
+  defp pair_entry_unproved(players, opts, path) do
     validate_input!(players, opts)
 
     if Ainalrami.ByePreference.active?(opts) do
@@ -2094,7 +2146,9 @@ defmodule Ainalrami.Pairing do
       )
     end
 
-    :ok
+    # The same counters go into a pairing proof as the decisions it does
+    # not cover with a dual certificate (`Ainalrami.Proof`).
+    Ainalrami.Proof.count(key, by)
   end
 
   # `fun.()`, its time added to the counter `key` (ms) when counting.
@@ -2739,11 +2793,16 @@ defmodule Ainalrami.Pairing do
     Process.delete(@env_direct_plain_key)
   end
 
-  defp read_env_flag(name), do: System.get_env(name) || :unset
+  defp read_env_flag(name) do
+    case Ainalrami.Proof.reference_flag(name) do
+      nil -> System.get_env(name) || :unset
+      value -> value
+    end
+  end
 
   defp env_flag(key, name) do
     case Process.get(key) do
-      nil -> System.get_env(name)
+      nil -> Ainalrami.Proof.reference_flag(name) || System.get_env(name)
       :unset -> nil
       value -> value
     end

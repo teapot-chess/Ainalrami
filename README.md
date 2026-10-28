@@ -545,6 +545,7 @@ to the library's for each one. A flag is laid over what the file says:
 | `--virtual-points=1-10:1,1,0.5/11:0.5` | players' `:accelerations` | any other table: `RANKS:` one value per round. Not C.04.7, and stderr says so |
 | `--half-bye=3,7` `--zero-bye=12` `--full-bye=20` | a bye in the player's games | (`-p`, `-x`) byes asked for in the round being paired, as a `240` record says them; a zero-point one is an absence |
 | `--cascade-order` | `cascade_order: true` | (`-p`) boards in the order the brackets were paired instead of C.04.2 3.6's |
+| `--proof=FILE` | `proof:` | (`-p`) a certificate per round that every matching the engine solved is a maximum-weight one; see [pairing proofs](#pairing-proofs---proof) |
 | `--judge=1-5,2-6,3-0` | `Alternatives.judge/4` | (`-x`) a whole other round, 0 for the bye, judged against the one paired: illegal pairs, then the first criterion that separates them |
 | `--bye-alternatives` `--float-alternatives` | `Alternatives.bye_alternatives/3`, `float_alternatives/3` | (`-x`) had each other player of the bracket taken the bye, or floated, instead |
 | `--alternative-pairs` | each candidate's `alternative` | (`-x`, with either of the two above) under each alternative, its boards that differ from the played round, the played boards they replace, how many boards are the same, and - for a tie, when the brackets leave no doubt - whether it is another order of S2 or an exchange between S1 and S2. Without it the two listings print what they always printed |
@@ -555,6 +556,27 @@ A flag in a mode that has no use for it is refused, not ignored
 file. Without any of them, and without `XXO` lines, every run prints what
 it printed before: `tools/cli_golden.exs` compares two checkouts' output,
 and this one's 2,747 runs are byte for byte the release's.
+
+### Pairing proofs: `--proof`
+
+```bash
+ainalrami round.trf -p pairs.txt --proof=round.proof.jsonl
+elixir tools/verify-proof/verify.exs round.proof.jsonl
+```
+
+writes, next to the pairing, a certificate that every weighted matching
+the engine solved while pairing the round is a maximum-weight matching of
+its graph: the graph, the matching, and an optimal dual solution (vertex
+and odd-set duals) that anyone can check with linear-programming duality.
+`tools/verify-proof/verify.exs` is that check - one Elixir script,
+standard library only, no code shared with the engine - and says PASS or
+FAIL per solve. The pairing written is byte for byte the one without the
+option. The weights are carried, not recomputed, so what is proven is the
+matcher; the weights' faithfulness to C.04.3 and the order the engine asks
+its questions in are trusted. Exactly what is proven, trusted and not
+covered, the format, and what it costs (seconds to minutes on large
+fields, and a big file - name it `.gz`):
+[docs/pairing-proofs.md](docs/pairing-proofs.md).
 
 ### Standings: `-s`
 
@@ -1111,6 +1133,7 @@ probe, is in
 | [docs/finding-tiebreakserver-2026-09.md](docs/finding-tiebreakserver-2026-09.md) | where TieBreakServer and C.07 part company (findings A-H) |
 | [docs/engineering-log.md](docs/engineering-log.md) | the dated build history, including what measured worse |
 | [docs/cli-parity.md](docs/cli-parity.md) | every library option against its flag and its record |
+| [docs/pairing-proofs.md](docs/pairing-proofs.md) | per-round optimality certificates (`--proof`) and their independent verifier |
 | [TODO.md](TODO.md) | open work |
 
 ## Development

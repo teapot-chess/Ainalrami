@@ -44,6 +44,12 @@ defmodule Ainalrami.CardinalityMatching do
   of every pair.
   """
   def maximum(adj) do
+    # Counted in a pairing proof as a decision no dual certificate covers.
+    Ainalrami.Proof.count(:cardinality_maximum)
+    do_maximum(adj)
+  end
+
+  defp do_maximum(adj) do
     n = tuple_size(adj)
     match = greedy(adj, n)
 
@@ -73,6 +79,8 @@ defmodule Ainalrami.CardinalityMatching do
   graph searched is `adj` plus the pairs of `match`.
   """
   def augment_from(adj, match, root, dead) do
+    Ainalrami.Proof.count(:cardinality_augment)
+
     case search(adj, match, root, dead) do
       {:path, to, p} -> {:ok, augment(to, p, match)}
       {:none, _outer} -> :none
@@ -84,8 +92,9 @@ defmodule Ainalrami.CardinalityMatching do
   maximum matching leaves exactly one vertex exposed; `:no` otherwise.
   """
   def exposable(adj) do
+    Ainalrami.Proof.count(:cardinality_exposable)
     n = tuple_size(adj)
-    match = maximum(adj)
+    match = do_maximum(adj)
 
     case Enum.reject(0..(n - 1)//1, &is_map_key(match, &1)) do
       [u] ->
