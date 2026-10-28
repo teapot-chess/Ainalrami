@@ -154,7 +154,7 @@ written in the `end` record, and the verifier no longer needs it.
   That choice is **trusted, not checked**; what the proof adds is the
   line between the two cases: a forced board could not have been
   otherwise, a board that is not forced was the tie-break's choice. In
-  the corpus below 90-99% of boards are forced, by axis (table under
+  the corpus below 84-99.8% of boards are forced, by axis (table under
   "Evidence"); the rest are where a second engine with a different search
   order could publish a different, equally optimal round.
 * **Vertex names.** That vertex `u` of a read is the player the record
@@ -390,11 +390,109 @@ recording. The reference path is the expensive half: it is the
 whole-field matcher run for every bracket, which is exactly the work the
 engine's shortcuts exist to avoid.
 
-PLACEHOLDER-OVERHEAD
+Single positions (`tools/proof_bench.exs DIR proof`: round 6 of a
+generated event, nothing else running; off is the median of 3-5; peak is
+the whole VM's `:erlang.memory(:total)`, sampled every 5 ms):
+
+| players | off | reference path alone | proof on | peak, off / on | records (weighted + cardinality) | proof size (gzipped) |
+|---|---|---|---|---|---|---|
+| 30 | 4.2 ms | 10 ms | 17 ms | 51 / 51 MB | 30 + 4 | 133 KB (11 KB) |
+| 100 | 9.5 ms | 113 ms | 188 ms | 53 / 59 MB | 70 + 4 | 1.8 MB (107 KB) |
+| 200 | 10.8 ms | 0.61 s | 0.94 s | 52 / 96 MB | 119 + 5 | 7.9 MB (366 KB) |
+| 400 | 21.8 ms | 4.0 s | 6.0 s | 54 / 251 MB | 225 + 7 | 38 MB (2.6 MB) |
+| 600 | 27.9 ms | 11.7 s | 17.3 s | 62 / 514 MB | 324 + 4 | 91 MB (5.3 MB) |
+| 1,000 | 43.0 ms | 53.9 s | 76.7 s | 59 / 1,468 MB | 524 + 3 | 277 MB (13.8 MB) |
+
+**Memory.** The proof is written a record at a time (`proof: {:stream,
+fun}`; the CLI's file, gzipped on the fly for `.gz`), and the recorder
+keeps only the last eight weighted graphs to diff against - which share
+their terms with the matcher's own. The peak with the proof on is the
+reference path's own: the same 1,000-player position paired on the
+reference path with nothing recorded peaks at 1,619 MB in the same
+measurement. Format 1 also held the round's 277 MB of proof text as one
+string before writing it; format 2 never holds more than a record. The
+whole-field matcher at a thousand players is what costs the memory, and
+it is the price of a proof at that size.
+
+Per round over the corpus axes below (one desktop, 16 schedulers, several
+tournaments at once, and the off-path differential running alongside for
+most of it, so the absolute times are loaded ones):
+
+| axis | players | off | on | proof size, mean (max) |
+|---|---|---|---|---|
+| p_tiny | 4-12 | 2.1 ms | 4.6 ms | 7 KB (20 KB) |
+| p_small | 3-40 | 5.6 ms | 22 ms | 57 KB (225 KB) |
+| p_mixed | 6-150 | 25 ms | 0.92 s | 1.1 MB (5.0 MB) |
+| p_150_300 | 155-295 | 29 ms | 10.7 s | 8.6 MB (16 MB) |
+| p_400_1000 | 414-996 | 44 ms | 125 s (max 1,012 s) | 88 MB (211 MB) |
+
+Against format 1, the records added are cheap (a cardinality witness is a
+few lists, a read a few numbers) and the proof sizes are unchanged within
+a few per cent. What did cost time is honesty about round one and the
+odd-field bootstrap: format 1 let both take their shortcuts on the
+reference path and the bootstrap's shortcut was then counted as
+uncertified; format 2 sends them through their matchings, so a first
+round at 400-1,000 players now has a proof (53 s mean in the large axis)
+where it had almost none. The rest of the loaded-corpus difference
+(p_150_300 5.4 s to 10.7 s, the large axis 81 s to 125 s) was measured
+with the differential sharing the machine and is not a like-for-like
+figure; the single positions above are.
+
+Proofs compress well (the graphs repeat from record to record); `.gz`
+takes off about nineteen twentieths at a thousand players.
+
+The verifier streams too: one line at a time, plus the same bounded
+window of graphs. The 1,000-player proof above (277 MB, 538 records)
+verifies in 54 s with the BEAM's working set under 400 MB.
 
 ## Evidence
 
-PLACEHOLDER-EVIDENCE
+Measured 2026-10-28 on the branch, format 2, on a desktop.
+
+**The option off changes nothing.** `tools/perf_diff.exs corpus small`
+(8 axes, 45,000 fuzz tournaments: byes, forbidden pairs and acceleration,
+late entrants, point systems, tiny deep fields) paired by v0.47.0 and by
+this branch: 370,781 rounds, 0 differing, 0 missing on either side,
+89,661 of them with their alternatives fingerprinted as well.
+
+**The option on changes nothing either, and every round's proof verifies
+in full.** `tools/proof_corpus.exs` pairs every round of every fuzz
+tournament with the option off and on (the proof streamed), compares the
+two, and runs the verifier on the proof in-process. A round is bad if the
+two pairings differ, any record fails, a published board is not exactly a
+pair read off a proven matching, or anything is uncertified:
+
+| axis | tournaments | rounds | players | records verified | boards | read off a proven matching | forced | uncertified | bad rounds |
+|---|---|---|---|---|---|---|---|---|---|
+| p_tiny | 500 | 3,717 | 4-12 | 58,444 | 12,466 | 12,466 | 10,919 (87.6%) | 0 | 0 |
+| p_small | 1,500 | 12,758 | 3-40 | 337,067 | 119,009 | 119,009 | 100,596 (84.5%) | 0 | 0 |
+| p_mixed | 1,000 | 8,940 | 6-150 | 568,311 | 328,205 | 328,205 | 300,969 (91.7%) | 0 | 0 |
+| p_150_300 | 40 | 200 | 155-295 | 25,903 | 21,845 | 21,845 | 21,397 (97.9%) | 0 | 0 |
+| p_400_1000 | 12 | 36 | 414-996 | 12,656 | 12,225 | 12,225 | 12,197 (99.8%) | 0 | 0 |
+| **total** | **3,052** | **25,651** | | **1,002,381** | **493,750** | **493,750** | **446,078 (90.3%)** | **0** | **0** |
+
+The large axis ran two tournaments at a time; the proof is streamed, but
+the corpus collects each round's lines to verify them in-process.
+
+So every published board of 25,651 rounds is a pair of a matching shown
+optimal, 90% of them are in every optimum of their graph, and the other
+10% - mostly small fields, where equal-weight alternatives are common -
+are where the tie-break, which the proof does not check, made the
+choice.
+
+**The verifier is not a rubber stamp.** `tamper.exs` on each axis's
+sample round: the untouched round passes; a matched edge's weight, a
+matched vertex's dual, a removed pair, two swapped partners, a "maximum"
+matching with a pair removed, a moved read, two swapped published
+partners and a board split into byes each fail. On engine proofs found to
+hold them, "augment" turned "blocked" with the path's inner vertices as
+the barrier, and "blocked" turned "augment" along a made-up path, fail
+too. The test suite runs the tampers on ten rounds and hand-builds the
+rest: a triangle that needs its odd set, a 4-cycle whose window claim is
+refused because the tie is real (and whose boards are read but not
+forced), barriers that do not meet the bound, a "blocked" claim where a
+path exists, exposable sets one vertex too big or too small, a pair read
+and not published, and a player at two boards.
 
 ## Reproducing
 
