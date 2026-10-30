@@ -1732,20 +1732,53 @@ defmodule Ainalrami.CLI do
   # `./live.trf` and `live.trf` are the same file here as they are on disk.
   # A caller who genuinely wants to overwrite can write elsewhere and move it,
   # which at least leaves a moment where both files exist.
+  #
+  # `--proof=FILE` has the same two ways to eat a file, and ate both quietly
+  # with exit 0: opened (and truncated) after the input was read, it replaced
+  # the tournament with JSON; opened before the board list was written, it
+  # was replaced BY the board list, so the proof asked for never existed.
+  # Same refusal, same moment - before anything is opened, read or written.
   defp pair_checked(input_path, positional_rest, prefs, flags) do
-    case positional_rest do
-      [output_path | _] ->
-        if Path.expand(output_path) == Path.expand(input_path) do
-          usage_error(
-            "the output file is the input file (#{input_path}) - " <>
-              "-p writes a board list, not a tournament, so this would destroy it"
-          )
-        else
-          pair(input_path, positional_rest, prefs, flags)
-        end
+    output_path = List.first(positional_rest)
+    proof_path = text_option(flags, "proof")
 
-      [] ->
+    cond do
+      output_path && same_file?(output_path, input_path) ->
+        usage_error(
+          "the output file is the input file (#{input_path}) - " <>
+            "-p writes a board list, not a tournament, so this would destroy it"
+        )
+
+      proof_path && same_file?(proof_path, input_path) ->
+        usage_error(
+          "the --proof file (#{proof_path}) is the input file (#{input_path}) - " <>
+            "the proof would overwrite the tournament it is proving"
+        )
+
+      proof_path && output_path && same_file?(proof_path, output_path) ->
+        usage_error(
+          "the --proof file (#{proof_path}) is the output file (#{output_path}) - " <>
+            "the board list would overwrite the proof"
+        )
+
+      true ->
         pair(input_path, positional_rest, prefs, flags)
+    end
+  end
+
+  # Expanded paths, compared case-blind on Windows and macOS, whose default
+  # filesystems think `Live.trf` and `live.trf` are one file. A case-sensitive
+  # volume there costs a refusal of two names differing only in case, which
+  # is a cheaper mistake than the alternative. Links are not followed.
+  defp same_file?(a, b), do: comparable_path(a) == comparable_path(b)
+
+  defp comparable_path(path) do
+    expanded = Path.expand(path)
+
+    case :os.type() do
+      {:win32, _} -> String.downcase(expanded)
+      {:unix, :darwin} -> String.downcase(expanded)
+      _ -> expanded
     end
   end
 

@@ -66,6 +66,8 @@ with the reference on every one of them.
 
 ## [Unreleased]
 
+- [Fix] **`--proof=FILE` no longer eats the file it is aimed at.** Pointed at the input TRF, it replaced the tournament with its own proof; pointed at `-p`'s output, the board list replaced the proof. Both exited 0, which is the part that hurts. Either collision is now refused, naming both paths, before anything is opened - a refused run touches nothing. Paths are compared expanded, and case-blind on Windows and macOS, because their filesystems are.
+
 ## [0.48.0] - 2026-10-28
 
 - [Feature] **A round can now come with a proof instead of a reputation.** `--proof=FILE` (or `FILE.gz`) on `-p`; `proof: fn text -> ... end` or `proof: {:stream, fn line -> ... end}` in the library. One JSON record per line, written as the engine works rather than assembled at the end, so a thousand-player proof costs disk, not memory. Every weighted matching behind the round comes with its graph and a dual solution of Edmonds' matching polytope; every "can the rest still be paired" question comes with its witness - the augmenting path when the answer is yes, a Tutte-Berge barrier when it is no. `tools/verify-proof/verify.exs` checks the lot with integer arithmetic: one Elixir script, standard library only, not a line shared with the engine. `tools/verify-proof/tamper.exs` forges a weight, a dual, a matched edge, a barrier, an augmenting path, a read or a published board and watches each one fail, which is the only way to know a verifier is not just saying yes.
