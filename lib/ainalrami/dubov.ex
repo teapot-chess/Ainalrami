@@ -289,6 +289,19 @@ defmodule Ainalrami.Dubov do
 
   defp ranks(players), do: Enum.map(players, & &1.rank)
 
+  @doc """
+  The initial colour (5.1) a file without `152` shows in round 1, as `"w"`
+  or `"b"` - what `pair_round/2` infers on its own. Replaying a whole file
+  (`ainalrami -c`) reads it once off the full file, because the state before
+  round 1 has no round 1 to read it from.
+  """
+  def infer_initial_colour(players, point_system \\ nil) do
+    case initial_colour(nil, players, point_system || Trf.default_point_system()) do
+      :white -> "w"
+      :black -> "b"
+    end
+  end
+
   # 5.1's initial colour. A file that does not record the draw (no 152)
   # shows it in round 1, where 5.2.1 decided every board: the higher ranked
   # player of the first board got the initial colour if their number was

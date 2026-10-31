@@ -1119,6 +1119,17 @@ The run: one scheduler per worker on the shared 80-core VM, 2026-10-07,
 and the rest continued on fresh seeds; every line written is a whole
 position). Usage and the summary are in the script's header.
 
+## The Dubov system (2026-10-31)
+
+C.04.4.1 has no outside reference for the 2026 edition, so `Ainalrami.Dubov`
+is held to a brute-force reading of the rule text
+(`test/support/dubov_reference.ex`, no code shared with the engine) and
+to the absolute criteria, as the team engine was. 507,945 rounds over
+4-12 player fields (seeds 1..100,000 at 4-10 players, 1..10,000 at 11-12),
+every round paired by both under both readings of D2: **0 disagreements,
+0 rounds where the two readings parted.** Method, readings and coverage:
+[conformance-c0441-dubov.md](conformance-c0441-dubov.md).
+
 ## Not covered
 
 Stated so the claim's boundary is explicit:

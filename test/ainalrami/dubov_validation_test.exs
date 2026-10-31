@@ -109,6 +109,9 @@ defmodule Ainalrami.DubovValidationTest do
     )
 
     assert stats.rounds > 0
+    # Reading D2: the literal and the C7-reaching rule never part (the
+    # Bracket moduledoc's t = 0 argument). A split here retires the proof.
+    assert stats.splits == 0
   end
 
   # Larger fields, beyond the reference: the absolute criteria and the
