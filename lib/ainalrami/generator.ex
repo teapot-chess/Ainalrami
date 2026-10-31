@@ -129,6 +129,14 @@ defmodule Ainalrami.Generator do
         :dutch ->
           format
 
+        :lim when format != [] ->
+          raise ArgumentError, ":system :lim is not paired with :match_format or :groups"
+
+        :lim ->
+          if Keyword.get(opts, :acceleration),
+            do: raise(ArgumentError, ":system :lim has no acceleration"),
+            else: [system: :lim]
+
         s when s in [:dubov, :burstein] and format == [] ->
           [system: s]
 
@@ -137,7 +145,7 @@ defmodule Ainalrami.Generator do
 
         other ->
           raise ArgumentError,
-                ":system must be :dutch, :dubov or :burstein, not #{inspect(other)}"
+                ":system must be :dutch, :dubov, :burstein or :lim, not #{inspect(other)}"
       end
 
     # After the roster size and round count, so those two draw exactly as
@@ -243,7 +251,9 @@ defmodule Ainalrami.Generator do
             # `XXM` and `XXG` (`Ainalrami.Trf`), only when asked for.
             match_format: if(match_format, do: true),
             pairing_groups: if(groups != [], do: groups),
-            type_code: type_code(system, match_format, Keyword.get(opts, :acceleration))
+            type_code: type_code(system, match_format, Keyword.get(opts, :acceleration)),
+            # `XXO system lim` (L11 in docs/conformance-c0443-lim.md).
+            pairing_system: if(system == :lim, do: "lim")
           },
           players: final
         },
@@ -261,6 +271,7 @@ defmodule Ainalrami.Generator do
   defp type_code(:dubov, _match, _acceleration), do: "FIDE_DUBOV"
   defp type_code(:burstein, _match, :baku), do: "FIDE_BURSTEIN_BAKU"
   defp type_code(:burstein, _match, _acceleration), do: "FIDE_BURSTEIN"
+  defp type_code(:lim, _match, _acceleration), do: "CUSTOM_SWISS"
 
   defp type_code(_dutch, match_format, _acceleration),
     do: if(match_format, do: "CUSTOM_SWISS")
@@ -577,6 +588,19 @@ defmodule Ainalrami.Generator do
 
       {:error, reason} ->
         raise Pairing.NoValidPairingError, message: "Burstein: #{inspect(reason)}"
+    end
+  end
+
+  defp pair_and_play(players, total_rounds, outcomes, {forbidden, [system: :lim]}, initial_colour) do
+    opts = [
+      expected_rounds: total_rounds,
+      forbidden_pairs: forbidden,
+      initial_colour: initial_colour
+    ]
+
+    case Ainalrami.Lim.pair_next_round(players, opts) do
+      {:ok, pairs} -> play_pairs(players, pairs, outcomes)
+      {:error, reason} -> raise Pairing.NoValidPairingError, message: "Lim: #{inspect(reason)}"
     end
   end
 

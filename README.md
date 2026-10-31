@@ -1,6 +1,6 @@
 # Ainalrami
 
-A FIDE Swiss pairing engine - the Dutch system, and now Dubov and Burstein - written in
+A FIDE Swiss pairing engine - the Dutch system, and now Dubov, Burstein and Lim - written in
 Elixir. No JVM, no external binary, no runtime dependencies.
 
 > **Ainalrami** - ν¹ Sagittarii A, from the Arabic *Ain al Rami*, "the eye
@@ -12,8 +12,9 @@ Ainalrami implements **C.04.3, the FIDE (Dutch) System, effective
 still ship. It reads and writes TRF16 and FIDE's 2026 TRF format (TRF26),
 mirrors JaVaFo's command-line shape, and is verified against two
 independent reference implementations. It also pairs team Swiss events
-(C.04.6), the Dubov system (C.04.4.1) and the Burstein system (C.04.4.2),
-both 2026 editions, and computes the
+(C.04.6), the Dubov system (C.04.4.1), the Burstein system (C.04.4.2) and,
+as a documented reading, the Lim system (C.04.4.3), all 2026 editions, and
+computes the
 FIDE tie-breaks (C.07, effective 1 March 2026), individual and team.
 
 **Status: beta.** The engine is functionally complete and reproduces
@@ -427,7 +428,8 @@ Tournament Type Code Table defines it (`Ainalrami.TypeCode`):
 | `FIDE_SCHILLER_TxP`, `FIDE_SCHEVENINGEN_Gn` and their shorthands | exit 2: predetermined, by rules FIDE has not yet defined |
 | `FIDE_DUBOV`, `FIDE_DUBOV_BAKU` | replayed by the Dubov system (*The Dubov system* below), colours included: 5.2 decides every colour from the initial colour, which `152` gives or round 1 shows |
 | `FIDE_BURSTEIN`, `FIDE_BURSTEIN_BAKU` | replayed by the Burstein system (*The Burstein system* below): the seeding rounds by Dutch, as 1.6 says, the rest by C.04.4.2 |
-| `FIDE_DOUBLESWISS` (with or without `_BAKU`) | exit 2: Ainalrami pairs the Dutch, Dubov and Burstein systems only |
+| `FIDE_DOUBLESWISS` (with or without `_BAKU`) | exit 2: Ainalrami pairs the Dutch, Dubov, Burstein and Lim systems only |
+| `CUSTOM_SWISS` with `XXO system lim` | replayed by the Lim system (*The Lim system* below); TRF26 has no code for Lim |
 | `CUSTOM_*`, `FIDE_TEAM*_BAKU` | exit 2: a system of the competition's own; the team engine has no acceleration |
 | none, or one off the table (said so) | the `092` type (a round robin - a team one when its games are team matches throughout, else individual - played as many times as its rounds need; a Scheveningen, Schiller or knockout exits 2), else the games: team matches throughout make a team Swiss, anything else the Dutch system |
 
@@ -631,8 +633,7 @@ A file whose `192` is `FIDE_DUBOV` or `FIDE_DUBOV_BAKU` is paired (`-p`) and
 replayed (`-c`) by C.04.4.1, the 2026 edition (`Ainalrami.Dubov`);
 `--system=dubov` does the same for a file with no `192`, and `-g
 --system=dubov` writes one. A `--system` that contradicts the file's `192`
-exits 2 rather than either quietly winning, and so does `--system=lim`,
-which is not built.
+exits 2 rather than either quietly winning.
 
 What Dubov needs that Dutch does not: the round count (`142`/`XXR` or
 `--rounds`; [C8]-[C10] stop in the last round) and a rating for every
@@ -675,6 +676,29 @@ no legal pairing.
 
 Readings and validation:
 [docs/conformance-c0442-burstein.md](docs/conformance-c0442-burstein.md).
+
+### The Lim system: `--system=lim`
+
+C.04.4.3, the 2026 edition (`Ainalrami.Lim`), **as a documented reading**:
+the text is a 1987 procedure for an arbiter with pairing cards, no other Lim
+engine is known, and every place it was read is written down. TRF26 has no
+`192` code for Lim, so a Lim file says `192 CUSTOM_SWISS` and this
+program's own `XXO system lim`; either the record alone or `--system=lim`
+chooses it, `-g --system=lim` writes both, and `XXO system lim` beside any
+other `192` exits 2.
+
+The scoregroups above the median are paired top down, those below it bottom
+up, the median group last; floaters, exchanges and colours follow Articles
+3-5. The round count is required (the last round lets equal scores meet
+whatever their colours, Article 6). Ratings are not read, so
+`--provisional-rating` is refused; so is an acceleration, which Lim does not
+have, and the Maxi-tournament rules, which no 2026 text defines. Forbidden
+pairs, pre-recorded byes, late entrants, the point system and the initial
+colour work as for Dutch. The Dutch engine's own tools are refused as for
+Dubov.
+
+Readings, validation and the questions for FIDE:
+[docs/conformance-c0443-lim.md](docs/conformance-c0443-lim.md).
 
 ### Match format, pairing groups and soft pairs
 

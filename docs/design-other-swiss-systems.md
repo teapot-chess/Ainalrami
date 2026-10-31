@@ -1,6 +1,6 @@
 # Design: the other FIDE Swiss systems (Dubov, Burstein, Lim)
 
-Status: **Dubov built** (branch `dubov`, 2026-10-31; readings and validation in `docs/conformance-c0441-dubov.md`). **Burstein built** (branch `burstein`, 2026-10-31; `docs/conformance-c0442-burstein.md`). Lim: design only. Written 2026-10-31 against
+Status: **Dubov built** (branch `dubov`, 2026-10-31; readings and validation in `docs/conformance-c0441-dubov.md`). **Burstein built** (branch `burstein`, 2026-10-31; `docs/conformance-c0442-burstein.md`). **Lim built, as a documented reading** (branch `lim`, 2026-10-31; `docs/conformance-c0443-lim.md`). Written 2026-10-31 against
 Ainalrami main at `7916279` (v0.48.0) and OpenPairings main at `8dda1052`.
 
 Rule texts used: C.04.4.1 Dubov, C.04.4.2 Burstein and C.04.4.3 Lim, all

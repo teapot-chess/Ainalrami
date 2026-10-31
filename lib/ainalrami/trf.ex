@@ -224,6 +224,9 @@ defmodule Ainalrami.Trf do
     * `XXO provisional-rating rank rating` - the provisional rating the Chief
       Arbiter assigned an unrated player, which the Dubov system (C.04.4.1
       1.1.2) pairs by (`tournament[:provisional_ratings]`, `%{rank => rating}`).
+    * `XXO system lim` - the tournament is paired by the Lim system
+      (C.04.4.3), which TRF26's `192` table has no code for; written beside
+      `192 CUSTOM_SWISS` (`tournament[:pairing_system]`, `"lim"`).
 
   One code, not one per option, because each new `XX` code is a chance of
   meaning something else to another program: `XXS` would have been the
@@ -1318,7 +1321,9 @@ defmodule Ainalrami.Trf do
       for {rank, rating} <- Enum.sort(t[:provisional_ratings] || %{}),
           do: "XXO provisional-rating #{rank} #{rating}"
 
-    soft ++ position ++ excluded ++ preferences ++ ratings ++ provisional ++ teams
+    system = if t[:pairing_system] == "lim", do: ["XXO system lim"], else: []
+
+    soft ++ position ++ excluded ++ preferences ++ ratings ++ provisional ++ teams ++ system
   end
 
   # `XXM` and `XXG`, this engine's own (see the moduledoc). Written in both
@@ -2920,6 +2925,16 @@ defmodule Ainalrami.Trf do
       ["provisional-rating", text] ->
         parse_xxo_provisional(acc, text, line)
 
+      ["system", word] ->
+        case String.trim(word) do
+          "lim" ->
+            put_in(acc.tournament[:pairing_system], "lim")
+
+          _ ->
+            raise ValidationError,
+              message: "XXO system takes lim, the one system TRF26 has no code for: #{line}"
+        end
+
       ["bye-" <> kind = keyword, text] ->
         kinds = Map.new(Ainalrami.PairingInput.bye_kinds())
 
@@ -2967,7 +2982,7 @@ defmodule Ainalrami.Trf do
         raise ValidationError,
           message:
             "XXO does not have #{inspect(keyword)} (soft-pairs, soft-position, bye-want, " <>
-              "bye-want-soft, bye-avoid, bye-avoid-soft, bye-exclude, round-ratings, provisional-rating, " <>
+              "bye-want-soft, bye-avoid, bye-avoid-soft, bye-exclude, round-ratings, provisional-rating, system, " <>
               "team-forbidden, team-soft-pairs), or " <>
               "it has nothing after it: #{line}"
 
