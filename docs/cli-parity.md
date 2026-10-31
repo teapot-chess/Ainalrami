@@ -134,6 +134,27 @@ Not built: a Burstein proof and Burstein's own `-x`.
 `test/ainalrami/burstein_cli_test.exs` holds the flags to the files;
 `-g --system=burstein` followed by `-c` replays clean.
 
+## The Lim system (C.04.4.3) - `-p`, `-c`, `-g`
+
+`Ainalrami.Lim.pair_next_round/2`; the command line's side is
+`Ainalrami.DubovCLI`. Readings: `docs/conformance-c0443-lim.md`.
+
+| library | flag | file | FIDE? |
+|---|---|---|---|
+| the system itself | `--system=lim` (`-p`, `-c`, `-g`); one that contradicts the file exits 2 | `192 CUSTOM_SWISS` + `XXO system lim` **(new)**; the `XXO` record alone also works | yes - the system is FIDE's, the record is ours because TRF26 has no code (L11) |
+| `expected_rounds:` - **required** (Article 6, the last round) | `--rounds=N` | `142`, `XXR` | yes |
+| `initial_colour:` | `--initial-colour=` | `152`, `XXC`; absent, read off round 1 | yes |
+| `point_system:`, `forbidden_pairs:` | as for Dutch | as for Dutch | as for Dutch |
+| `maxi:` (Maxi-tournaments, 3.2.3/3.8/5.7) | - refused, not built (L2) | - | - |
+| acceleration | refused: Lim has none | `XXA`/`250` refused | - |
+
+Refused for a Lim file, exit 1: the same organiser options and flags as for
+Dubov, and `--provisional-rating`; `-x` exits 2. Not built: a Lim proof
+and Lim's own `-x`.
+
+`test/ainalrami/lim_cli_test.exs` holds the flags to the files;
+`-g --system=lim` followed by `-c` replays clean.
+
 ## Round robins - `-p`, `-x`, `-c`
 
 `Ainalrami.Berger.round/4` and `Ainalrami.RoundRobin`: the table has no

@@ -1142,6 +1142,18 @@ players, 1..20,000 at 11-12): **0 disagreements.** Numbers against
 bbpPairings, the readings and what each alternative would change:
 [conformance-c0442-burstein.md](conformance-c0442-burstein.md).
 
+## The Lim system (2026-10-31)
+
+C.04.4.3 has no reference implementation at all and no `192` code, and
+its text is a procedure rather than a set of criteria, so the engine
+(`Ainalrami.Lim`) is labelled a documented reading. It is held to a
+brute-force reading written separately (`test/support/lim_reference.ex`:
+every floater split and every pairing enumerated, no matching, no shared
+code) on every round, round 1 included. 1,012,508 rounds over 4-12 player
+fields (seeds 1..200,000 at 4-10 players, 1..20,000 at 11-12): **0
+disagreements.** The readings, what three of them would change, and fifteen
+questions for FIDE: [conformance-c0443-lim.md](conformance-c0443-lim.md).
+
 ## Not covered
 
 Stated so the claim's boundary is explicit:

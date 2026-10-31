@@ -1,7 +1,7 @@
 defmodule Ainalrami.DubovCLI do
   @moduledoc """
   The command line's other FIDE Swiss systems - Dubov (C.04.4.1) and
-  Burstein (C.04.4.2): which system a file is paired by, the options
+  Burstein (C.04.4.2) and Lim (C.04.4.3): which system a file is paired by, the options
   `Ainalrami.Dubov` and `Ainalrami.Burstein` take from a parsed file and
   the flags, and the words for their refusals. `Ainalrami.CLI` does the
   reading, writing and replaying, exactly as for the Dutch system. (The
@@ -32,15 +32,21 @@ defmodule Ainalrami.DubovCLI do
     * the initial colour, the point system, `XXP` pairs, pre-recorded byes.
       No ratings: the index is made of the tournament's own results.
 
+  ## What the Lim system takes
+
+  `192 CUSTOM_SWISS` with `XXO system lim` (TRF26 has no Lim code; reading
+  L11), or the record alone, or `--system=lim`; the round count (the last
+  round differs, Article 6); the initial colour, the point system, `XXP`
+  pairs, pre-recorded byes. No ratings, no acceleration, no Maxi rules.
+
   The organiser's own options (soft pairs, bye preferences and exclusions,
   pairing groups, the match format), `-x`, `--proof` and the explain
   alternatives belong to the Dutch engine and are refused for either.
   """
 
-  alias Ainalrami.{Burstein, Dubov, TypeCode}
+  alias Ainalrami.{Burstein, Dubov, Lim, TypeCode}
 
-  @systems %{"dutch" => :dutch, "dubov" => :dubov, "burstein" => :burstein}
-  @not_built ~w(lim)
+  @systems %{"dutch" => :dutch, "dubov" => :dubov, "burstein" => :burstein, "lim" => :lim}
   @others [:dubov, :burstein]
 
   # Flags the Dubov and Burstein routes do not have.
@@ -54,10 +60,12 @@ defmodule Ainalrami.DubovCLI do
   @doc "The system's name in a sentence."
   def name(:dubov), do: "Dubov system"
   def name(:burstein), do: "Burstein system"
+  def name(:lim), do: "Lim system"
 
   @doc "The system's name with its article number."
   def title(:dubov), do: "the Dubov system (C.04.4.1)"
   def title(:burstein), do: "the Burstein system (C.04.4.2)"
+  def title(:lim), do: "the Lim system (C.04.4.3)"
 
   @doc """
   `:dutch`, `:dubov`, `:burstein`, or `{:refuse, exit_code, message}` for a
@@ -72,31 +80,38 @@ defmodule Ainalrami.DubovCLI do
         _ -> nil
       end
 
+    lim? = parsed.tournament[:pairing_system] == "lim"
+
     file_system =
       case from_file do
         {system, _code} when system in @others -> system
+        _ when lim? -> :lim
         _ -> :dutch
       end
 
     cond do
-      flag in @not_built ->
+      lim? and from_file != nil and elem(from_file, 1) != "CUSTOM_SWISS" ->
         {:refuse, 2,
-         "--system=#{flag}: not built yet - this program pairs dutch, dubov and burstein"}
+         "XXO system lim contradicts the file's 192 #{elem(from_file, 1)} - " <>
+           "a Lim file says 192 CUSTOM_SWISS or nothing"}
 
       flag != nil and not Map.has_key?(@systems, flag) ->
-        {:refuse, 1, "unknown --system \"#{flag}\" - dutch, dubov or burstein"}
+        {:refuse, 1, "unknown --system \"#{flag}\" - dutch, dubov, burstein or lim"}
 
       flag == nil ->
         file_system
 
-      from_file == nil ->
+      from_file == nil and not lim? ->
         @systems[flag]
+
+      flag == "lim" and from_file != nil and elem(from_file, 1) == "CUSTOM_SWISS" ->
+        :lim
 
       @systems[flag] == file_system ->
         file_system
 
       true ->
-        {_system, code} = from_file
+        code = if lim?, do: "CUSTOM_SWISS + XXO system lim", else: elem(from_file, 1)
 
         {:refuse, 2,
          "--system=#{flag} contradicts the file's 192 #{code} - " <>
@@ -139,6 +154,9 @@ defmodule Ainalrami.DubovCLI do
     ]
   end
 
+  @doc "The options `Ainalrami.Lim` pairs a parsed file with: Burstein's."
+  def lim_opts(tournament), do: burstein_opts(tournament)
+
   @doc "The options `Ainalrami.Burstein` pairs a parsed file with."
   def burstein_opts(tournament) do
     [
@@ -166,6 +184,33 @@ defmodule Ainalrami.DubovCLI do
       {:error, reason} -> {:error, describe_burstein(reason)}
     end
   end
+
+  def pair(:lim, players, opts) do
+    case Lim.pair_next_round(players, opts) do
+      {:ok, pairs} -> {:ok, pairs}
+      {:error, reason} -> {:error, describe_lim(reason)}
+    end
+  end
+
+  @doc "What a refusal of `Ainalrami.Lim.pair_round/2` means, in words."
+  def describe_lim(:no_legal_pairing),
+    do:
+      "no legal pairing exists for this round under the Lim system's compatibility rule " <>
+        "(2.1: no rematch, no third colour in succession, no three more of one colour); " <>
+        "the Chief Arbiter decides"
+
+  def describe_lim(:expected_rounds_required),
+    do:
+      "the Lim system needs the tournament's round count (142/XXR or --rounds): " <>
+        "the last round is paired differently (Article 6)"
+
+  def describe_lim({:unsupported_option, :acceleration}),
+    do: "the Lim system has no acceleration - the file's virtual points (XXA/250) are refused"
+
+  def describe_lim({:unsupported_option, key}),
+    do: "#{key} is not part of the Lim system"
+
+  def describe_lim(other), do: describe(other)
 
   @doc "What a refusal of `Ainalrami.Burstein.pair_round/2` means, in words."
   def describe_burstein(:no_legal_pairing),

@@ -1560,7 +1560,7 @@ defmodule Ainalrami.CLI do
     if opts[:match_format] && opts[:groups],
       do: refuse("--match-format and --groups together are not paired - give one")
 
-    if opts[:system] in [:dubov, :burstein] and (opts[:match_format] || opts[:groups]),
+    if opts[:system] in [:dubov, :burstein, :lim] and (opts[:match_format] || opts[:groups]),
       do: refuse("--system=#{opts[:system]} pairs neither the match format nor pairing groups")
 
     Log.step("Generating a random tournament")
@@ -1586,8 +1586,8 @@ defmodule Ainalrami.CLI do
       "dutch" -> nil
       "dubov" -> :dubov
       "burstein" -> :burstein
-      "lim" -> refuse("--system=lim: not built yet - dutch, dubov or burstein")
-      other -> refuse("unknown --system \"#{other}\" - dutch, dubov or burstein")
+      "lim" -> :lim
+      other -> refuse("unknown --system \"#{other}\" - dutch, dubov, burstein or lim")
     end
   end
 
@@ -2976,6 +2976,13 @@ Round #{round_number} - #{boards} board#{plural(boards)} over " <>
              )},
           else: {:swiss, :burstein, parsed, DubovCLI.burstein_opts(t)}
 
+      system == :lim ->
+        if text_option(flags, "provisional-rating"),
+          do:
+            {:exit,
+             usage_error("--provisional-rating is for the Dubov system; Lim reads no ratings")},
+          else: {:swiss, :lim, parsed, DubovCLI.lim_opts(t)}
+
       true ->
         case DubovCLI.provisional_flag(text_option(flags, "provisional-rating")) do
           {:error, message} -> {:exit, usage_error(message)}
@@ -3072,6 +3079,9 @@ Round #{round_number} - #{boards} board#{plural(boards)} over " <>
 
   defp infer_initial(:burstein, parsed, _opts),
     do: Ainalrami.Burstein.infer_initial_colour(parsed.players)
+
+  defp infer_initial(:lim, parsed, _opts),
+    do: Ainalrami.Lim.infer_initial_colour(parsed.players)
 
   defp check_individual(parsed) do
     report_type_code(parsed)
@@ -3766,11 +3776,13 @@ Round #{round_number} - #{boards} board#{plural(boards)} over " <>
 
     The tournament, over what the file says (-p, -x, -c):
       --rounds=N                the round count (142/XXR)
-      --system=dutch|dubov|burstein   the Swiss system (192 FIDE_DUBOV[_BAKU]
+      --system=dutch|dubov|burstein|lim   the Swiss system (192 FIDE_DUBOV[_BAKU]
                                 picks Dubov, C.04.4.1; FIDE_BURSTEIN[_BAKU]
-                                Burstein, C.04.4.2); -p and -c only for
-                                those two, and a flag that contradicts 192
-                                is refused (exit 2). Also -g
+                                Burstein, C.04.4.2; 192 CUSTOM_SWISS with
+                                XXO system lim, Lim, C.04.4.3); -p and -c
+                                only for those three, and a flag that
+                                contradicts the file is refused (exit 2).
+                                Also -g
       --provisional-rating=12:1500/17:1400   Dubov: the Chief Arbiter's
                                 rating for an unrated player (1.1.2), over
                                 XXO provisional-rating RANK RATING
