@@ -50,7 +50,7 @@ tools/bbp_reverse_dumps/
 # tools/perf_bench.exs's generated tournaments - deterministic, regenerated on demand
 /bench_corpus/
 
-# The large-field team run (tools/team_large_run.py, RUN.md): its state,
+# The large-field team run (tools/team_large_run.exs, RUN.md): its state,
 # log, stop flag and reproducers live in the worktree it runs from.
 /team_large_state.json
 /team_large_state.json.tmp

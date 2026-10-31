@@ -96,7 +96,7 @@ is recorded as a C2 breach and could not be re-run here.**
 1. Both engines on the file: `bbpPairings.exe --dutch f.trf -p bbp.txt -l bbp.list`
    and `mix run -e 'Ainalrami.CLI.main(["-p", "f.trf", "ain.txt"])'`
    (worktree of `main` at ea64fd7).
-2. Both answers through `tools/rule_check_round.py`, written for this pass
+2. Both answers through `tools/rule_check_round.exs`, written for this pass
    and sharing no code with either engine. It checks that every present
    player is paired exactly once and that there is at most one bye, and only
    on an odd field. It checks C1 (no rematch), C2 (no bye to a player with an
@@ -125,7 +125,7 @@ for f in test/fixtures/c2_seed8112174-r9-p18.trf test/fixtures/fe1_disputes/*.tr
   bbpPairings.exe --dutch "$f" -p bbp.txt
   bbp-fixed.exe   --dutch "$f" -p fix.txt
   mix run -e "Ainalrami.CLI.main([\"-p\", \"$f\", \"ain.txt\"])"
-  python tools/rule_check_round.py "$f" bbp.txt ain.txt
+  elixir tools/rule_check_round.exs "$f" bbp.txt ain.txt
 done
 ```
 
