@@ -41,6 +41,8 @@ defmodule Ainalrami.CLI do
   alias Ainalrami.{
     Acceleration,
     ByePreference,
+    Dubov,
+    DubovCLI,
     EventFormat,
     Generator,
     Log,
@@ -134,14 +136,14 @@ defmodule Ainalrami.CLI do
                    groups soft-pairs soft-position team-forbidden team-soft-pairs
                    forbidden bye-exclude virtual-points baku-group-a half-bye zero-bye
                    full-bye absent-teams judge points max-upfloater-sets explain-limit
-                   cap-rounds max-candidates dialect proof)
+                   cap-rounds max-candidates dialect proof system provisional-rating)
 
   # `-g` options that only an individual tournament has, and the ones only
   # a team event has (`--team=...`); each refused for the other.
   @individual_generator_flags ~w(players bye-pct forbidden-pct acceleration ratings
                                  rating-range rating-top rating-step rating-sigma results
                                  full-bye-pct half-bye-pct zero-bye-pct forfeit-win-pct
-                                 double-forfeit-pct odd-results-pct unset unset-chance groups)
+                                 double-forfeit-pct odd-results-pct unset unset-chance groups system)
   @team_generator_flags ~w(teams boards reserves cycles team-type score secondary
                            match-points pab forfeit-match-points match-forfeit-pct
                            absent-team-pct absent-player-pct out-of-order-pct)
@@ -646,7 +648,9 @@ defmodule Ainalrami.CLI do
     "force" => [:explain],
     "absent" => [:explain],
     "cap-rounds" => [:check, :standings],
-    "dialect" => [:generate]
+    "dialect" => [:generate],
+    "system" => [:pair, :explain, :check, :generate],
+    "provisional-rating" => [:pair, :check]
   }
 
   defp misplaced_flag(_flags, nil), do: nil
@@ -1547,12 +1551,17 @@ defmodule Ainalrami.CLI do
         groups: generator_groups_option(flags),
         # The spelling of the file, not the tournament: `Trf.serialize/2`'s
         # `dialect:` - `engine` (the default) or `trf26`.
-        dialect: dialect_option(flags)
+        dialect: dialect_option(flags),
+        # `--system=dubov`: every round paired by C.04.4.1, `192 FIDE_DUBOV`.
+        system: generator_system_option(flags)
       ]
       |> Enum.reject(fn {_key, value} -> is_nil(value) end)
 
     if opts[:match_format] && opts[:groups],
       do: refuse("--match-format and --groups together are not paired - give one")
+
+    if opts[:system] == :dubov and (opts[:match_format] || opts[:groups]),
+      do: refuse("--system=dubov pairs neither the match format nor pairing groups")
 
     Log.step("Generating a random tournament")
     {text, seed} = Generator.generate(opts)
@@ -1567,6 +1576,18 @@ defmodule Ainalrami.CLI do
     end
 
     0
+  end
+
+  # `-g --system=dutch|dubov`. Dutch is the default and is passed as nothing
+  # at all, so every seed generates byte for byte what it always did.
+  defp generator_system_option(flags) do
+    case text_option(flags, "system") do
+      nil -> nil
+      "dutch" -> nil
+      "dubov" -> :dubov
+      v when v in ["burstein", "lim"] -> refuse("--system=#{v}: not built yet - dutch or dubov")
+      other -> refuse("unknown --system \"#{other}\" - dutch or dubov")
+    end
   end
 
   # `-g --dialect=engine|trf26`: how the Swiss generator spells its file.
@@ -1787,6 +1808,7 @@ defmodule Ainalrami.CLI do
 
     with {:ok, text} <- read_input(input_path),
          {:ok, parsed} <- parse_input(text, flags),
+         :dutch <- dubov_route(parsed, flags, prefs),
          :individual <- team_or_individual(parsed, prefs, flags) do
       round_count = report_roster(parsed)
 
@@ -1823,6 +1845,7 @@ defmodule Ainalrami.CLI do
       end
     else
       {:error, :halt} -> 1
+      {:dubov, parsed, opts} -> pair_dubov(parsed, opts, positional_rest)
       {:team, parsed, system} -> pair_team(parsed, system, positional_rest, flags)
       {:round_robin, parsed, settings} -> pair_round_robin(parsed, settings, positional_rest)
       {:exit, code} -> code
@@ -1851,6 +1874,7 @@ defmodule Ainalrami.CLI do
 
     with {:ok, text} <- read_input(input_path),
          {:ok, parsed} <- parse_input(text, flags),
+         :dutch <- dubov_route(parsed, flags, prefs),
          :individual <- team_or_individual(parsed, prefs, flags) do
       round_count = report_roster(parsed)
       Log.step("Pairing engine")
@@ -1866,10 +1890,25 @@ defmodule Ainalrami.CLI do
           1
       end
     else
-      {:error, :halt} -> 1
-      {:team, parsed, system} -> explain_team(parsed, system, flags)
-      {:round_robin, parsed, settings} -> explain_round_robin(parsed, settings)
-      {:exit, code} -> code
+      {:error, :halt} ->
+        1
+
+      {:dubov, _parsed, _opts} ->
+        Log.error(
+          "-x explains the Dutch system's criteria ladder, which the Dubov system does not " <>
+            "have; not explained (exit code #{@not_replayed})"
+        )
+
+        @not_replayed
+
+      {:team, parsed, system} ->
+        explain_team(parsed, system, flags)
+
+      {:round_robin, parsed, settings} ->
+        explain_round_robin(parsed, settings)
+
+      {:exit, code} ->
+        code
     end
   end
 
@@ -2815,7 +2854,8 @@ Round #{round_number} - #{boards} board#{plural(boards)} over " <>
     Log.step("Loading #{input_path}")
 
     with {:ok, text} <- read_input(input_path),
-         {:ok, parsed} <- parse_input(text, flags) do
+         {:ok, parsed} <- parse_input(text, flags),
+         :dutch <- dubov_route(parsed, flags, []) do
       groups? = (parsed.tournament[:pairing_groups] || []) != []
       organiser? = PairingInput.organiser?(parsed.tournament)
       team_apart? = PairingInput.team_apart?(parsed.tournament)
@@ -2872,6 +2912,143 @@ Round #{round_number} - #{boards} board#{plural(boards)} over " <>
       end
     else
       {:error, :halt} -> 1
+      {:dubov, parsed, opts} -> check_dubov(parsed, opts)
+      {:exit, code} -> code
+    end
+  end
+
+  # ---- the Dubov system ----------------------------------------------------
+
+  # Which system an individual file is paired by (`Ainalrami.DubovCLI.system/2`):
+  # `:dutch` to carry on as always, `{:dubov, parsed, opts}`, or
+  # `{:exit, code}`. A file that is not Dubov sees no change but the refusal
+  # of `--provisional-rating`, which nothing else reads.
+  defp dubov_route(parsed, flags, prefs) do
+    case DubovCLI.system(parsed, text_option(flags, "system")) do
+      {:refuse, 2, message} ->
+        Log.error("not paired - #{message} (exit code #{@not_replayed})")
+        {:exit, @not_replayed}
+
+      {:refuse, _code, message} ->
+        {:exit, usage_error(message)}
+
+      :dutch ->
+        if text_option(flags, "provisional-rating"),
+          do:
+            {:exit, usage_error("--provisional-rating is for the Dubov system (--system=dubov)")},
+          else: :dutch
+
+      :dubov ->
+        dubov_settings(parsed, flags, prefs)
+    end
+  end
+
+  defp dubov_settings(parsed, flags, prefs) do
+    t = parsed.tournament
+
+    cond do
+      prefs != [] ->
+        {:exit,
+         usage_error("bye preferences are an organiser's rule the Dubov system does not have")}
+
+      flag =
+          given(
+            flags,
+            DubovCLI.refused_flags() ++ @team_swiss_only ++ ~w(lineups boards absent-teams)
+          ) ->
+        {:exit, usage_error("--#{flag} is not for the Dubov system")}
+
+      PairingInput.organiser?(t) ->
+        Log.error("XXO soft-pair and bye records are the organiser's, not the Dubov system's")
+        {:exit, 1}
+
+      (t[:pairing_groups] || []) != [] or t[:match_format] == true ->
+        Log.error(
+          "XXG pairing groups and the XXM match format are not paired by the Dubov system"
+        )
+
+        {:exit, 1}
+
+      true ->
+        case DubovCLI.provisional_flag(text_option(flags, "provisional-rating")) do
+          {:error, message} -> {:exit, usage_error(message)}
+          provisional -> {:dubov, parsed, DubovCLI.opts(t, provisional)}
+        end
+    end
+  end
+
+  defp pair_dubov(parsed, opts, positional_rest) do
+    round_count = report_roster(parsed)
+    Log.step("Pairing engine")
+    Log.detail("the Dubov system (C.04.4.1), round #{round_count + 1}")
+
+    case DubovCLI.pair(parsed.players, opts) do
+      {:ok, pairs} ->
+        write_pairs(pairs, positional_rest)
+        0
+
+      {:error, message} ->
+        Log.error(message)
+        1
+    end
+  end
+
+  # `-c` on a Dubov file: every round re-paired from the state before it.
+  # Unlike the Dutch replay a colour difference IS a difference - Article
+  # 5.2 decides every colour from the initial colour, which the file gives
+  # (152) or round 1 shows.
+  defp check_dubov(parsed, opts) do
+    rounds = completed_rounds(parsed.players)
+
+    opts =
+      if opts[:initial_colour],
+        do: opts,
+        else:
+          Keyword.put(
+            opts,
+            :initial_colour,
+            Dubov.infer_initial_colour(parsed.players, opts[:point_system])
+          )
+
+    if rounds == 0 do
+      Log.warn("no completed rounds to check")
+      0
+    else
+      Log.step("Checking #{rounds} round(s) - the Dubov system (C.04.4.1)")
+      Log.detail("initial colour #{opts[:initial_colour]}")
+
+      results =
+        Enum.map(1..rounds, fn round ->
+          before = state_before_round(parsed.players, round, opts[:point_system])
+          actual = recorded_pairs(parsed.players, round)
+
+          case DubovCLI.pair(before, opts) do
+            {:ok, expected} ->
+              cond do
+                Enum.sort(expected) == Enum.sort(actual) ->
+                  Log.detail("round #{round}: matches")
+                  :ok
+
+                composition(expected) == composition(actual) ->
+                  Log.warn("round #{round}: DIFFERS in colours (5.2)")
+                  Log.warn("  file:   #{inspect(Enum.sort(actual))}")
+                  Log.warn("  engine: #{inspect(Enum.sort(expected))}")
+                  :differs
+
+                true ->
+                  Log.warn("round #{round}: DIFFERS")
+                  Log.warn("  file:   #{inspect(Enum.sort(actual))}")
+                  Log.warn("  engine: #{inspect(Enum.sort(expected))}")
+                  :differs
+              end
+
+            {:error, message} ->
+              Log.warn("round #{round}: #{message}")
+              :differs
+          end
+        end)
+
+      finish_check(parsed, results, rounds)
     end
   end
 
@@ -3568,6 +3745,13 @@ Round #{round_number} - #{boards} board#{plural(boards)} over " <>
 
     The tournament, over what the file says (-p, -x, -c):
       --rounds=N                the round count (142/XXR)
+      --system=dutch|dubov      the Swiss system (192 FIDE_DUBOV[_BAKU]
+                                picks Dubov, C.04.4.1); -p and -c only for
+                                Dubov, and a flag that contradicts 192 is
+                                refused (exit 2). Also -g
+      --provisional-rating=12:1500/17:1400   Dubov: the Chief Arbiter's
+                                rating for an unrated player (1.1.2), over
+                                XXO provisional-rating RANK RATING
       --initial-colour=white|black   the drawing of lots (152/XXC)
       --points=3,1,0            the point system (BB*/162); or by name:
                                 win:3,draw:1,loss:0,bye:1,forfeit-loss:0,

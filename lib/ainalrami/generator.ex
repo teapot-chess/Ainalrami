@@ -119,6 +119,26 @@ defmodule Ainalrami.Generator do
     format = if match_format, do: [match_format: true], else: []
     format = if groups == [], do: format, else: format ++ [groups: groups]
 
+    # `system: :dubov` pairs every round by C.04.4.1 instead (`Ainalrami.Dubov`)
+    # and says so in `192`. Absent, nothing below reads it, so every seed
+    # pairs exactly as it always did.
+    system = Keyword.get(opts, :system, :dutch)
+
+    format =
+      case system do
+        :dutch ->
+          format
+
+        :dubov when format == [] ->
+          [system: :dubov]
+
+        :dubov ->
+          raise ArgumentError, ":system :dubov is not paired with :match_format or :groups"
+
+        other ->
+          raise ArgumentError, ":system must be :dutch or :dubov, not #{inspect(other)}"
+      end
+
     # After the roster size and round count, so those two draw exactly as
     # they always did, and drawing nothing at all under `unset: :fixed`.
     opts = draw_unset(opts)
@@ -222,7 +242,7 @@ defmodule Ainalrami.Generator do
             # `XXM` and `XXG` (`Ainalrami.Trf`), only when asked for.
             match_format: if(match_format, do: true),
             pairing_groups: if(groups != [], do: groups),
-            type_code: if(match_format, do: "CUSTOM_SWISS")
+            type_code: type_code(system, match_format, Keyword.get(opts, :acceleration))
           },
           players: final
         },
@@ -235,6 +255,12 @@ defmodule Ainalrami.Generator do
 
     {text, seed}
   end
+
+  defp type_code(:dubov, _match, :baku), do: "FIDE_DUBOV_BAKU"
+  defp type_code(:dubov, _match, _acceleration), do: "FIDE_DUBOV"
+
+  defp type_code(_dutch, match_format, _acceleration),
+    do: if(match_format, do: "CUSTOM_SWISS")
 
   defp dialect!(dialect) when dialect in [:engine, :trf26], do: dialect
 
@@ -502,6 +528,33 @@ defmodule Ainalrami.Generator do
   # `format` is empty unless the match format or pairing groups were asked
   # for, and `EventFormat` is then `Pairing.pair_next_round/2` itself - so
   # every seed recorded before either existed pairs exactly as it did.
+  defp pair_and_play(
+         players,
+         total_rounds,
+         outcomes,
+         {forbidden, [system: :dubov]},
+         initial_colour
+       ) do
+    opts = [
+      expected_rounds: total_rounds,
+      forbidden_pairs: forbidden,
+      initial_colour: initial_colour
+    ]
+
+    case Ainalrami.Dubov.pair_next_round(players, opts) do
+      {:ok, pairs} ->
+        play_pairs(players, pairs, outcomes)
+
+      {:error, {:unrated, ranks}} ->
+        raise ArgumentError,
+              "the Dubov system needs every player rated (1.1.1): #{inspect(ranks)}"
+
+      # 1.9.3's unpairable round ends the event, as a Dutch deadlock does.
+      {:error, reason} ->
+        raise Pairing.NoValidPairingError, message: "Dubov: #{inspect(reason)}"
+    end
+  end
+
   defp pair_and_play(players, total_rounds, outcomes, {forbidden, format}, initial_colour) do
     pairs =
       Ainalrami.EventFormat.pair_next_round(
@@ -517,6 +570,10 @@ defmodule Ainalrami.Generator do
         ] ++ format
       )
 
+    play_pairs(players, pairs, outcomes)
+  end
+
+  defp play_pairs(players, pairs, outcomes) do
     ratings = Map.new(players, &{&1.rank, &1.fide_rating})
     by_rank = Enum.reduce(pairs, %{}, &record_game(&1, &2, outcomes, ratings))
 

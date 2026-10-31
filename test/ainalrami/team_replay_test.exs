@@ -168,6 +168,13 @@ defmodule Ainalrami.TeamReplayTest do
       end
     end
 
+    test "FIDE_DUBOV is replayed by the Dubov system, so a Dutch-paired file differs" do
+      {out, exit_code} = check(individual([], "FIDE_DUBOV"))
+      assert exit_code == 1, out
+      assert out =~ "the Dubov system (C.04.4.1)"
+      assert out =~ "DIFFERS"
+    end
+
     for code <- ~w(FIDE_TEAM_BAKU FIDE_TEAM_TYPEA_MP_GP_BAKU CUSTOM_TEAM_SWISS_MP) do
       test "#{code} exits 2" do
         gen = swiss_with_rounds(60, 2)
@@ -323,7 +330,7 @@ defmodule Ainalrami.TeamReplayTest do
 
     test "a custom round robin, a Schiller, a knockout or a non-Dutch Swiss exits 2, not 1" do
       for code <-
-            ~w(CUSTOM_ROUNDROBIN FIDE_SCHILLER_4x3 FIDE_SCHEVENINGEN CUSTOM_KNOCKOUT CUSTOM_SWISS FIDE_DUBOV
+            ~w(CUSTOM_ROUNDROBIN FIDE_SCHILLER_4x3 FIDE_SCHEVENINGEN CUSTOM_KNOCKOUT CUSTOM_SWISS
                FIDE_BURSTEIN FIDE_DOUBLESWISS) do
         {out, exit_code} = check(individual([], code))
         assert exit_code == 2, "#{code}: #{out}"

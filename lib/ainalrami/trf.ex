@@ -221,6 +221,9 @@ defmodule Ainalrami.Trf do
       regulations count the rating tie-breaks that way (C.07 Article 10's
       note). Surfaced as the player's `:round_ratings`,
       `%{round => rating}`.
+    * `XXO provisional-rating rank rating` - the provisional rating the Chief
+      Arbiter assigned an unrated player, which the Dubov system (C.04.4.1
+      1.1.2) pairs by (`tournament[:provisional_ratings]`, `%{rank => rating}`).
 
   One code, not one per option, because each new `XX` code is a chance of
   meaning something else to another program: `XXS` would have been the
@@ -1311,7 +1314,11 @@ defmodule Ainalrami.Trf do
         "XXO #{keyword} " <> Ainalrami.PairingInput.format_group(group)
       end
 
-    soft ++ position ++ excluded ++ preferences ++ ratings ++ teams
+    provisional =
+      for {rank, rating} <- Enum.sort(t[:provisional_ratings] || %{}),
+          do: "XXO provisional-rating #{rank} #{rating}"
+
+    soft ++ position ++ excluded ++ preferences ++ ratings ++ provisional ++ teams
   end
 
   # `XXM` and `XXG`, this engine's own (see the moduledoc). Written in both
@@ -2910,6 +2917,9 @@ defmodule Ainalrami.Trf do
       ["round-ratings", text] ->
         parse_xxo_ratings(acc, text, line)
 
+      ["provisional-rating", text] ->
+        parse_xxo_provisional(acc, text, line)
+
       ["bye-" <> kind = keyword, text] ->
         kinds = Map.new(Ainalrami.PairingInput.bye_kinds())
 
@@ -2957,12 +2967,32 @@ defmodule Ainalrami.Trf do
         raise ValidationError,
           message:
             "XXO does not have #{inspect(keyword)} (soft-pairs, soft-position, bye-want, " <>
-              "bye-want-soft, bye-avoid, bye-avoid-soft, bye-exclude, round-ratings, " <>
+              "bye-want-soft, bye-avoid, bye-avoid-soft, bye-exclude, round-ratings, provisional-rating, " <>
               "team-forbidden, team-soft-pairs), or " <>
               "it has nothing after it: #{line}"
 
       [] ->
         raise ValidationError, message: "XXO line says nothing: #{line}"
+    end
+  end
+
+  # `XXO provisional-rating rank rating`: the rating the Chief Arbiter gives an
+  # unrated player for the Dubov system (C.04.4.1 Article 1.1.2), which pairs
+  # by ratings and requires every player to have one. A FIDE rule, not the
+  # organiser's own, so it is not one of `PairingInput.organiser?/1`'s.
+  defp parse_xxo_provisional(acc, text, line) do
+    case text |> String.split([" ", "\t"], trim: true) |> Enum.map(&strict_int/1) do
+      [rank, rating] when is_integer(rank) and is_integer(rating) and rating > 0 ->
+        if Map.has_key?(acc.tournament[:provisional_ratings] || %{}, rank) do
+          raise ValidationError,
+            message: "two XXO provisional-rating lines for starting rank #{rank}"
+        end
+
+        update_in(acc.tournament[:provisional_ratings], &Map.put(&1 || %{}, rank, rating))
+
+      _ ->
+        raise ValidationError,
+          message: "XXO provisional-rating takes a starting rank and a positive rating: #{line}"
     end
   end
 

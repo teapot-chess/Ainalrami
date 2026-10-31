@@ -33,8 +33,9 @@ defmodule Ainalrami.TeamReplay do
       `FIDE_DOUBLEROUNDROBIN`) - `{:round_robin, %{games: n,
       reverse_last_two?:, code:}}`, read by `Ainalrami.RoundRobin`;
     * everything else is `{:unreplayable, reason}`: Schiller and Scheveningen (predetermined, by rules FIDE has not yet
-      defined), knockouts, the Dubov, Burstein and Double Swiss systems
-      (Ainalrami pairs the Dutch system only), every `CUSTOM_*` system, and
+      defined), knockouts, the Burstein and Double Swiss systems (Ainalrami
+      pairs the Dutch and Dubov systems; `Ainalrami.CLI` sends a Dubov file to
+      `Ainalrami.Dubov` before it gets here), every `CUSTOM_*` system, and
       an accelerated team Swiss (`Ainalrami.TeamPairing` has no
       acceleration).
 
@@ -265,13 +266,13 @@ defmodule Ainalrami.TeamReplay do
     do: "is a knockout, not a Swiss"
 
   defp not_replayed(%{system: :dubov}),
-    do: "is the Dubov system, and Ainalrami pairs the Dutch system only"
+    do: "is the Dubov system, which is replayed as an individual Swiss, not here"
 
   defp not_replayed(%{system: :burstein}),
-    do: "is the Burstein system, and Ainalrami pairs the Dutch system only"
+    do: "is the Burstein system, and Ainalrami pairs the Dutch and Dubov systems only"
 
   defp not_replayed(%{system: :double_swiss}),
-    do: "is a Double Swiss, and Ainalrami pairs the Dutch system only"
+    do: "is a Double Swiss, and Ainalrami pairs the Dutch and Dubov systems only"
 
   defp not_replayed(%{system: system}) when system in [:custom_swiss, :custom_double_swiss],
     do: "is a Swiss of the competition's own, not the Dutch system"

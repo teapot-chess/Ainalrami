@@ -1,7 +1,7 @@
 # Ainalrami
 
-A FIDE Dutch-system Swiss pairing engine, written in Elixir. No JVM, no
-external binary, no runtime dependencies.
+A FIDE Swiss pairing engine - the Dutch system, and now Dubov - written in
+Elixir. No JVM, no external binary, no runtime dependencies.
 
 > **Ainalrami** - ν¹ Sagittarii A, from the Arabic *Ain al Rami*, "the eye
 > of the archer". A pairing engine's whole value is aiming exactly where
@@ -12,8 +12,8 @@ Ainalrami implements **C.04.3, the FIDE (Dutch) System, effective
 still ship. It reads and writes TRF16 and FIDE's 2026 TRF format (TRF26),
 mirrors JaVaFo's command-line shape, and is verified against two
 independent reference implementations. It also pairs team Swiss events
-(C.04.6) and computes the FIDE tie-breaks (C.07, effective 1 March 2026),
-individual and team.
+(C.04.6) and the Dubov system (C.04.4.1, 2026 edition), and computes the
+FIDE tie-breaks (C.07, effective 1 March 2026), individual and team.
 
 **Status: beta.** The engine is functionally complete and reproduces
 bbpPairings 6.0.0 exactly across 2.5 billion compared pairings, in six
@@ -424,7 +424,8 @@ Tournament Type Code Table defines it (`Ainalrami.TypeCode`):
 | an individual round robin (`BERGER_ROUNDROBIN_Gn`, `BERGER_ROUNDROBIN`, `FIDE_ROUNDROBIN`, `BERGER_DOUBLEROUNDROBIN`, `FIDE_DOUBLEROUNDROBIN`) | compared with the Berger tables, colours included, players numbered by starting rank (`Ainalrami.RoundRobin`); `FIDE_DOUBLEROUNDROBIN` plays the first cycle's last two rounds in reverse order |
 | `CUSTOM_ROUNDROBIN`, `CUSTOM_TEAM_ROUNDROBIN` | exit 2: a round robin of the competition's own |
 | `FIDE_SCHILLER_TxP`, `FIDE_SCHEVENINGEN_Gn` and their shorthands | exit 2: predetermined, by rules FIDE has not yet defined |
-| `FIDE_DUBOV`, `FIDE_BURSTEIN`, `FIDE_DOUBLESWISS` (with or without `_BAKU`) | exit 2: Ainalrami pairs the Dutch system only |
+| `FIDE_DUBOV`, `FIDE_DUBOV_BAKU` | replayed by the Dubov system (*The Dubov system* below), colours included: 5.2 decides every colour from the initial colour, which `152` gives or round 1 shows |
+| `FIDE_BURSTEIN`, `FIDE_DOUBLESWISS` (with or without `_BAKU`) | exit 2: Ainalrami pairs the Dutch and Dubov systems only |
 | `CUSTOM_*`, `FIDE_TEAM*_BAKU` | exit 2: a system of the competition's own; the team engine has no acceleration |
 | none, or one off the table (said so) | the `092` type (a round robin - a team one when its games are team matches throughout, else individual - played as many times as its rounds need; a Scheveningen, Schiller or knockout exits 2), else the games: team matches throughout make a team Swiss, anything else the Dutch system |
 
@@ -622,6 +623,35 @@ by category (`XXG` or `--groups=`) plays one table per group, table after
 table - both as OpenPairings schedules them; `-g --roundrobin` takes
 `--match-format` and `--groups=N`.
 
+### The Dubov system: `--system=dubov`
+
+A file whose `192` is `FIDE_DUBOV` or `FIDE_DUBOV_BAKU` is paired (`-p`) and
+replayed (`-c`) by C.04.4.1, the 2026 edition (`Ainalrami.Dubov`);
+`--system=dubov` does the same for a file with no `192`, and `-g
+--system=dubov` writes one. A `--system` that contradicts the file's `192`
+exits 2 rather than either quietly winning, and so do `--system=burstein`
+and `--system=lim`, which are not built.
+
+What Dubov needs that Dutch does not: the round count (`142`/`XXR` or
+`--rounds`; [C8]-[C10] stop in the last round) and a rating for every
+player (1.1.1) - an unrated one takes a provisional rating from `XXO
+provisional-rating` or `--provisional-rating=`, and a round with an unrated
+player and neither is refused. Baku is the virtual points the file carries
+(`XXA`/`250`, or `--acceleration=baku`), counted wherever the text says
+"score". Forbidden pairs, pre-recorded byes, late entrants, the point system
+and the initial colour work as for Dutch. With no `152` the initial colour
+is read off round 1.
+
+The Dutch engine's own tools are refused for a Dubov file, exit 1: bye
+preferences and exclusions, soft pairs, pairing groups, the match format,
+`--cascade-order` and `--proof`. `-x` and the alternatives exit 2: they
+explain the Dutch criteria ladder, which Dubov does not have. A round with
+no legal pairing (Dubov's [C3] has no topscorer exception) is refused,
+exit 1: 1.9.3 hands it to the Chief Arbiter, and so does this program.
+
+Every reading the text left open, and the validation behind it, is in
+[docs/conformance-c0441-dubov.md](docs/conformance-c0441-dubov.md).
+
 ### Match format, pairing groups and soft pairs
 
 Three settings OpenPairings pairs with that no FIDE record carries. The
@@ -814,8 +844,9 @@ command line's own name for the option.
 | `XXO team-forbidden 3 11 16 [@1-2]` | `--team-forbidden=` | a team Swiss's `XXP`: these TEAMS (team numbers) never meet, for every round or the rounds named (**not FIDE**) |
 | `XXO team-soft-pairs 3 11 16 [@1-2]` | `--team-soft-pairs=` | a team Swiss: these teams kept apart where no C.04.6 criterion minds (**not FIDE**) |
 | `XXO round-ratings 12 2100 2150 - 2180` | none | the rating player 12 held in each round, `-` or `0` for none: the rating tie-breaks (ARO, TPR, PTP, APRO, APPO) then count each opponent at the rating of that round. C.07 Article 10 allows it when the event's regulations say so (VCL4THP Q214) |
+| `XXO provisional-rating 12 1500` | `--provisional-rating=12:1500/17:1400` | the Dubov system: the rating the Chief Arbiter gives an unrated player (C.04.4.1 1.1.2). FIDE's own rule, so no warning; the Dutch engine has no use for it and ignores it. Two lines for one player are refused; one for a player who has a rating is refused when the round is paired |
 
-A round paired from any of these but the last is not a pure FIDE pairing, and `-p`,
+A round paired from any of these but the last two is not a pure FIDE pairing, and `-p`,
 `-x` and `-c` say so on stderr exactly as they do for the flags; flags and
 lines together add up. bbpPairings 6.0.0 and JaVaFo both skip the lines
 (ten mid-event files each, the same boards with and without them), so a

@@ -86,6 +86,32 @@ unless said otherwise).
 | `soft_pairs:` (same shape) | not yet passed | `--team-soft-pairs=3,11,16` **(new, -p/-x)** | `XXO team-soft-pairs 3 11 16 [@1-2]` **(new)** |
 | match points, the bye's and a forfeit's value | the standings | - (`-g` only) | `362`, `320`, `330` |
 
+## The Dubov system (C.04.4.1) - `-p`, `-c`, `-g`
+
+`Ainalrami.Dubov.pair_next_round/2`; the command line's side is
+`Ainalrami.DubovCLI`. Readings: `docs/conformance-c0441-dubov.md`.
+
+| library | flag | file | FIDE? |
+|---|---|---|---|
+| the system itself | `--system=dubov` (`-p`, `-c`, `-g`); one that contradicts `192` exits 2 | `192 FIDE_DUBOV`, `192 FIDE_DUBOV_BAKU` | yes |
+| `expected_rounds:` - **required** | `--rounds=N` | `142`, `XXR` | yes |
+| the `001` rating | - | `001` | yes |
+| `provisional_ratings:` | `--provisional-rating=12:1500/17:1400` (flag over file, per player) | `XXO provisional-rating 12 1500` - not warned, it is 1.1.2 | yes |
+| `initial_colour:` | `--initial-colour=` | `152`, `XXC`; absent, read off round 1 | yes |
+| `point_system:`, `forbidden_pairs:` | as for Dutch | as for Dutch | as for Dutch |
+| virtual points (Baku) | `--acceleration=baku`, `--virtual-points=` | `XXA`, `250` | yes |
+| `transposition_rule:` (reading D2) | - (a reading, not a setting: one line in `Ainalrami.Dubov`) | - | - |
+
+Refused for a Dubov file, exit 1: the organiser options (`soft_pairs`,
+`bye_preferences`, `bye_exclusions`, pairing groups, the match format, and
+their `XXO`/`XXG`/`XXM` records), `--cascade-order`, `--proof`, `--force`,
+`--absent`, `--judge` and the alternatives flags. `-x` exits 2. Not built:
+a Dubov proof (`--proof`; the team engine has none either) and Dubov's own
+`-x`.
+
+`test/ainalrami/dubov_cli_test.exs` holds the flags to the files;
+`-g --system=dubov` followed by `-c` replays clean.
+
 ## Round robins - `-p`, `-x`, `-c`
 
 `Ainalrami.Berger.round/4` and `Ainalrami.RoundRobin`: the table has no
