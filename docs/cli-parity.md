@@ -112,6 +112,28 @@ a Dubov proof (`--proof`; the team engine has none either) and Dubov's own
 `test/ainalrami/dubov_cli_test.exs` holds the flags to the files;
 `-g --system=dubov` followed by `-c` replays clean.
 
+## The Burstein system (C.04.4.2) - `-p`, `-c`, `-g`
+
+`Ainalrami.Burstein.pair_next_round/2`; the command line's side is
+`Ainalrami.DubovCLI` (both systems). Readings:
+`docs/conformance-c0442-burstein.md`.
+
+| library | flag | file | FIDE? |
+|---|---|---|---|
+| the system itself | `--system=burstein` (`-p`, `-c`, `-g`); one that contradicts `192` exits 2 | `192 FIDE_BURSTEIN`, `192 FIDE_BURSTEIN_BAKU` | yes |
+| `expected_rounds:` - **required** (it fixes the seeding rounds, 1.6.2) | `--rounds=N` | `142`, `XXR` | yes |
+| `initial_colour:` | `--initial-colour=` | `152`, `XXC`; absent, read off round 1 | yes |
+| `point_system:`, `forbidden_pairs:` | as for Dutch | as for Dutch | as for Dutch |
+| virtual points (Baku) | `--acceleration=baku`, `--virtual-points=` | `XXA`, `250` | yes |
+| ratings | - (`--provisional-rating` refused: the index is Buchholz, SB, TPN) | `001` ignored after seeding | yes |
+
+The seeding rounds go to the Dutch engine unchanged. Refused after them,
+exit 1: the same organiser options and flags as for Dubov; `-x` exits 2.
+Not built: a Burstein proof and Burstein's own `-x`.
+
+`test/ainalrami/burstein_cli_test.exs` holds the flags to the files;
+`-g --system=burstein` followed by `-c` replays clean.
+
 ## Round robins - `-p`, `-x`, `-c`
 
 `Ainalrami.Berger.round/4` and `Ainalrami.RoundRobin`: the table has no

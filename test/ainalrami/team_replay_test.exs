@@ -331,7 +331,7 @@ defmodule Ainalrami.TeamReplayTest do
     test "a custom round robin, a Schiller, a knockout or a non-Dutch Swiss exits 2, not 1" do
       for code <-
             ~w(CUSTOM_ROUNDROBIN FIDE_SCHILLER_4x3 FIDE_SCHEVENINGEN CUSTOM_KNOCKOUT CUSTOM_SWISS
-               FIDE_BURSTEIN FIDE_DOUBLESWISS) do
+               FIDE_DOUBLESWISS) do
         {out, exit_code} = check(individual([], code))
         assert exit_code == 2, "#{code}: #{out}"
         assert out =~ "rounds: not replayed - #{code}"
