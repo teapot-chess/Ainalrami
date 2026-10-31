@@ -1,6 +1,6 @@
 # Ainalrami
 
-A FIDE Swiss pairing engine - the Dutch system, and now Dubov - written in
+A FIDE Swiss pairing engine - the Dutch system, and now Dubov and Burstein - written in
 Elixir. No JVM, no external binary, no runtime dependencies.
 
 > **Ainalrami** - ν¹ Sagittarii A, from the Arabic *Ain al Rami*, "the eye
@@ -12,7 +12,8 @@ Ainalrami implements **C.04.3, the FIDE (Dutch) System, effective
 still ship. It reads and writes TRF16 and FIDE's 2026 TRF format (TRF26),
 mirrors JaVaFo's command-line shape, and is verified against two
 independent reference implementations. It also pairs team Swiss events
-(C.04.6) and the Dubov system (C.04.4.1, 2026 edition), and computes the
+(C.04.6), the Dubov system (C.04.4.1) and the Burstein system (C.04.4.2),
+both 2026 editions, and computes the
 FIDE tie-breaks (C.07, effective 1 March 2026), individual and team.
 
 **Status: beta.** The engine is functionally complete and reproduces
@@ -425,7 +426,8 @@ Tournament Type Code Table defines it (`Ainalrami.TypeCode`):
 | `CUSTOM_ROUNDROBIN`, `CUSTOM_TEAM_ROUNDROBIN` | exit 2: a round robin of the competition's own |
 | `FIDE_SCHILLER_TxP`, `FIDE_SCHEVENINGEN_Gn` and their shorthands | exit 2: predetermined, by rules FIDE has not yet defined |
 | `FIDE_DUBOV`, `FIDE_DUBOV_BAKU` | replayed by the Dubov system (*The Dubov system* below), colours included: 5.2 decides every colour from the initial colour, which `152` gives or round 1 shows |
-| `FIDE_BURSTEIN`, `FIDE_DOUBLESWISS` (with or without `_BAKU`) | exit 2: Ainalrami pairs the Dutch and Dubov systems only |
+| `FIDE_BURSTEIN`, `FIDE_BURSTEIN_BAKU` | replayed by the Burstein system (*The Burstein system* below): the seeding rounds by Dutch, as 1.6 says, the rest by C.04.4.2 |
+| `FIDE_DOUBLESWISS` (with or without `_BAKU`) | exit 2: Ainalrami pairs the Dutch, Dubov and Burstein systems only |
 | `CUSTOM_*`, `FIDE_TEAM*_BAKU` | exit 2: a system of the competition's own; the team engine has no acceleration |
 | none, or one off the table (said so) | the `092` type (a round robin - a team one when its games are team matches throughout, else individual - played as many times as its rounds need; a Scheveningen, Schiller or knockout exits 2), else the games: team matches throughout make a team Swiss, anything else the Dutch system |
 
@@ -629,8 +631,8 @@ A file whose `192` is `FIDE_DUBOV` or `FIDE_DUBOV_BAKU` is paired (`-p`) and
 replayed (`-c`) by C.04.4.1, the 2026 edition (`Ainalrami.Dubov`);
 `--system=dubov` does the same for a file with no `192`, and `-g
 --system=dubov` writes one. A `--system` that contradicts the file's `192`
-exits 2 rather than either quietly winning, and so do `--system=burstein`
-and `--system=lim`, which are not built.
+exits 2 rather than either quietly winning, and so does `--system=lim`,
+which is not built.
 
 What Dubov needs that Dutch does not: the round count (`142`/`XXR` or
 `--rounds`; [C8]-[C10] stop in the last round) and a rating for every
@@ -651,6 +653,28 @@ exit 1: 1.9.3 hands it to the Chief Arbiter, and so does this program.
 
 Every reading the text left open, and the validation behind it, is in
 [docs/conformance-c0441-dubov.md](docs/conformance-c0441-dubov.md).
+
+### The Burstein system: `--system=burstein`
+
+A file whose `192` is `FIDE_BURSTEIN` or `FIDE_BURSTEIN_BAKU` is paired
+(`-p`) and replayed (`-c`) by C.04.4.2, the 2026 edition
+(`Ainalrami.Burstein`); `--system=burstein` does the same for a file with
+no `192`, and `-g --system=burstein` writes one. The first
+`min(rounds / 2, 4)` rounds are seeding rounds and 1.6 pairs them by the
+Dutch system, so the Dutch engine pairs them, unchanged; `-p` says so.
+After them the index is Buchholz, then Sonneborn-Berger, then the pairing
+number - never the score, never a rating.
+
+So the round count is required (`142`/`XXR` or `--rounds`), and
+`--provisional-rating` is refused: Burstein reads no ratings. Forbidden
+pairs, pre-recorded byes, late entrants, Baku, the point system and the
+initial colour work as for Dutch; with no `152` the initial colour is read
+off round 1. The Dutch engine's own tools are refused after the seeding
+rounds exactly as for Dubov (exit 1; `-x` exits 2), and so is a round with
+no legal pairing.
+
+Readings and validation:
+[docs/conformance-c0442-burstein.md](docs/conformance-c0442-burstein.md).
 
 ### Match format, pairing groups and soft pairs
 

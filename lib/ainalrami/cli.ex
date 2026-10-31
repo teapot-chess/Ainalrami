@@ -1560,8 +1560,8 @@ defmodule Ainalrami.CLI do
     if opts[:match_format] && opts[:groups],
       do: refuse("--match-format and --groups together are not paired - give one")
 
-    if opts[:system] == :dubov and (opts[:match_format] || opts[:groups]),
-      do: refuse("--system=dubov pairs neither the match format nor pairing groups")
+    if opts[:system] in [:dubov, :burstein] and (opts[:match_format] || opts[:groups]),
+      do: refuse("--system=#{opts[:system]} pairs neither the match format nor pairing groups")
 
     Log.step("Generating a random tournament")
     {text, seed} = Generator.generate(opts)
@@ -1578,15 +1578,16 @@ defmodule Ainalrami.CLI do
     0
   end
 
-  # `-g --system=dutch|dubov`. Dutch is the default and is passed as nothing
+  # `-g --system=dutch|dubov|burstein`. Dutch is the default and is passed as nothing
   # at all, so every seed generates byte for byte what it always did.
   defp generator_system_option(flags) do
     case text_option(flags, "system") do
       nil -> nil
       "dutch" -> nil
       "dubov" -> :dubov
-      v when v in ["burstein", "lim"] -> refuse("--system=#{v}: not built yet - dutch or dubov")
-      other -> refuse("unknown --system \"#{other}\" - dutch or dubov")
+      "burstein" -> :burstein
+      "lim" -> refuse("--system=lim: not built yet - dutch, dubov or burstein")
+      other -> refuse("unknown --system \"#{other}\" - dutch, dubov or burstein")
     end
   end
 
@@ -1845,7 +1846,7 @@ defmodule Ainalrami.CLI do
       end
     else
       {:error, :halt} -> 1
-      {:dubov, parsed, opts} -> pair_dubov(parsed, opts, positional_rest)
+      {:swiss, system, parsed, opts} -> pair_system(system, parsed, opts, positional_rest)
       {:team, parsed, system} -> pair_team(parsed, system, positional_rest, flags)
       {:round_robin, parsed, settings} -> pair_round_robin(parsed, settings, positional_rest)
       {:exit, code} -> code
@@ -1893,10 +1894,10 @@ defmodule Ainalrami.CLI do
       {:error, :halt} ->
         1
 
-      {:dubov, _parsed, _opts} ->
+      {:swiss, system, _parsed, _opts} ->
         Log.error(
-          "-x explains the Dutch system's criteria ladder, which the Dubov system does not " <>
-            "have; not explained (exit code #{@not_replayed})"
+          "-x explains the Dutch system's criteria ladder, which the #{DubovCLI.name(system)} " <>
+            "does not have; not explained (exit code #{@not_replayed})"
         )
 
         @not_replayed
@@ -2912,17 +2913,17 @@ Round #{round_number} - #{boards} board#{plural(boards)} over " <>
       end
     else
       {:error, :halt} -> 1
-      {:dubov, parsed, opts} -> check_dubov(parsed, opts)
+      {:swiss, system, parsed, opts} -> check_system(system, parsed, opts)
       {:exit, code} -> code
     end
   end
 
-  # ---- the Dubov system ----------------------------------------------------
+  # ---- the Dubov and Burstein systems ---------------------------------------
 
   # Which system an individual file is paired by (`Ainalrami.DubovCLI.system/2`):
-  # `:dutch` to carry on as always, `{:dubov, parsed, opts}`, or
-  # `{:exit, code}`. A file that is not Dubov sees no change but the refusal
-  # of `--provisional-rating`, which nothing else reads.
+  # `:dutch` to carry on as always, `{:swiss, system, parsed, opts}` for
+  # `:dubov` or `:burstein`, or `{:exit, code}`. A Dutch file sees no change
+  # but the refusal of `--provisional-rating`, which nothing else reads.
   defp dubov_route(parsed, flags, prefs) do
     case DubovCLI.system(parsed, text_option(flags, "system")) do
       {:refuse, 2, message} ->
@@ -2938,51 +2939,60 @@ Round #{round_number} - #{boards} board#{plural(boards)} over " <>
             {:exit, usage_error("--provisional-rating is for the Dubov system (--system=dubov)")},
           else: :dutch
 
-      :dubov ->
-        dubov_settings(parsed, flags, prefs)
+      system ->
+        system_settings(system, parsed, flags, prefs)
     end
   end
 
-  defp dubov_settings(parsed, flags, prefs) do
+  defp system_settings(system, parsed, flags, prefs) do
     t = parsed.tournament
+    name = DubovCLI.name(system)
 
     cond do
       prefs != [] ->
-        {:exit,
-         usage_error("bye preferences are an organiser's rule the Dubov system does not have")}
+        {:exit, usage_error("bye preferences are an organiser's rule the #{name} does not have")}
 
       flag =
           given(
             flags,
             DubovCLI.refused_flags() ++ @team_swiss_only ++ ~w(lineups boards absent-teams)
           ) ->
-        {:exit, usage_error("--#{flag} is not for the Dubov system")}
+        {:exit, usage_error("--#{flag} is not for the #{name}")}
 
       PairingInput.organiser?(t) ->
-        Log.error("XXO soft-pair and bye records are the organiser's, not the Dubov system's")
+        Log.error("XXO soft-pair and bye records are the organiser's, not the #{name}'s")
         {:exit, 1}
 
       (t[:pairing_groups] || []) != [] or t[:match_format] == true ->
-        Log.error(
-          "XXG pairing groups and the XXM match format are not paired by the Dubov system"
-        )
-
+        Log.error("XXG pairing groups and the XXM match format are not paired by the #{name}")
         {:exit, 1}
+
+      system == :burstein ->
+        if text_option(flags, "provisional-rating"),
+          do:
+            {:exit,
+             usage_error(
+               "--provisional-rating is for the Dubov system; Burstein reads no ratings"
+             )},
+          else: {:swiss, :burstein, parsed, DubovCLI.burstein_opts(t)}
 
       true ->
         case DubovCLI.provisional_flag(text_option(flags, "provisional-rating")) do
           {:error, message} -> {:exit, usage_error(message)}
-          provisional -> {:dubov, parsed, DubovCLI.opts(t, provisional)}
+          provisional -> {:swiss, :dubov, parsed, DubovCLI.opts(t, provisional)}
         end
     end
   end
 
-  defp pair_dubov(parsed, opts, positional_rest) do
+  defp pair_system(system, parsed, opts, positional_rest) do
     round_count = report_roster(parsed)
     Log.step("Pairing engine")
-    Log.detail("the Dubov system (C.04.4.1), round #{round_count + 1}")
 
-    case DubovCLI.pair(parsed.players, opts) do
+    Log.detail(
+      "#{DubovCLI.title(system)}, round #{round_count + 1}#{seeding_note(system, opts, round_count + 1)}"
+    )
+
+    case DubovCLI.pair(system, parsed.players, opts) do
       {:ok, pairs} ->
         write_pairs(pairs, positional_rest)
         0
@@ -2993,28 +3003,33 @@ Round #{round_number} - #{boards} board#{plural(boards)} over " <>
     end
   end
 
-  # `-c` on a Dubov file: every round re-paired from the state before it.
-  # Unlike the Dutch replay a colour difference IS a difference - Article
-  # 5.2 decides every colour from the initial colour, which the file gives
-  # (152) or round 1 shows.
-  defp check_dubov(parsed, opts) do
+  defp seeding_note(:burstein, opts, round) do
+    rounds = opts[:expected_rounds]
+
+    if is_integer(rounds) and round <= Ainalrami.Burstein.seeding_rounds(rounds),
+      do: " - a seeding round, paired by the Dutch system (1.6)",
+      else: ""
+  end
+
+  defp seeding_note(_system, _opts, _round), do: ""
+
+  # `-c` on a Dubov or Burstein file: every round re-paired from the state
+  # before it. Unlike the Dutch replay a colour difference IS a difference -
+  # Article 5.2 decides every colour from the initial colour, which the file
+  # gives (152) or round 1 shows.
+  defp check_system(system, parsed, opts) do
     rounds = completed_rounds(parsed.players)
 
     opts =
       if opts[:initial_colour],
         do: opts,
-        else:
-          Keyword.put(
-            opts,
-            :initial_colour,
-            Dubov.infer_initial_colour(parsed.players, opts[:point_system])
-          )
+        else: Keyword.put(opts, :initial_colour, infer_initial(system, parsed, opts))
 
     if rounds == 0 do
       Log.warn("no completed rounds to check")
       0
     else
-      Log.step("Checking #{rounds} round(s) - the Dubov system (C.04.4.1)")
+      Log.step("Checking #{rounds} round(s) - #{DubovCLI.title(system)}")
       Log.detail("initial colour #{opts[:initial_colour]}")
 
       results =
@@ -3022,7 +3037,7 @@ Round #{round_number} - #{boards} board#{plural(boards)} over " <>
           before = state_before_round(parsed.players, round, opts[:point_system])
           actual = recorded_pairs(parsed.players, round)
 
-          case DubovCLI.pair(before, opts) do
+          case DubovCLI.pair(system, before, opts) do
             {:ok, expected} ->
               cond do
                 Enum.sort(expected) == Enum.sort(actual) ->
@@ -3051,6 +3066,12 @@ Round #{round_number} - #{boards} board#{plural(boards)} over " <>
       finish_check(parsed, results, rounds)
     end
   end
+
+  defp infer_initial(:dubov, parsed, opts),
+    do: Dubov.infer_initial_colour(parsed.players, opts[:point_system])
+
+  defp infer_initial(:burstein, parsed, _opts),
+    do: Ainalrami.Burstein.infer_initial_colour(parsed.players)
 
   defp check_individual(parsed) do
     report_type_code(parsed)
@@ -3745,10 +3766,11 @@ Round #{round_number} - #{boards} board#{plural(boards)} over " <>
 
     The tournament, over what the file says (-p, -x, -c):
       --rounds=N                the round count (142/XXR)
-      --system=dutch|dubov      the Swiss system (192 FIDE_DUBOV[_BAKU]
-                                picks Dubov, C.04.4.1); -p and -c only for
-                                Dubov, and a flag that contradicts 192 is
-                                refused (exit 2). Also -g
+      --system=dutch|dubov|burstein   the Swiss system (192 FIDE_DUBOV[_BAKU]
+                                picks Dubov, C.04.4.1; FIDE_BURSTEIN[_BAKU]
+                                Burstein, C.04.4.2); -p and -c only for
+                                those two, and a flag that contradicts 192
+                                is refused (exit 2). Also -g
       --provisional-rating=12:1500/17:1400   Dubov: the Chief Arbiter's
                                 rating for an unrated player (1.1.2), over
                                 XXO provisional-rating RANK RATING

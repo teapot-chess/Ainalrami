@@ -1130,6 +1130,18 @@ every round paired by both under both readings of D2: **0 disagreements,
 0 rounds where the two readings parted.** Method, readings and coverage:
 [conformance-c0441-dubov.md](conformance-c0441-dubov.md).
 
+## The Burstein system (2026-10-31)
+
+C.04.4.2 (2026) has no outside reference either: bbpPairings' `--burstein`
+is the old edition, kept as a control and never as the oracle. The
+seeding rounds are Dutch by 1.6 and are checked against `bbpPairings
+--dutch`; every round after them is held to a brute-force reading of the
+text (`test/support/burstein_reference.ex`, no code shared with the
+engine). 570,661 rounds over 4-12 player fields (seeds 1..200,000 at 4-10
+players, 1..20,000 at 11-12): **0 disagreements.** Numbers against
+bbpPairings, the readings and what each alternative would change:
+[conformance-c0442-burstein.md](conformance-c0442-burstein.md).
+
 ## Not covered
 
 Stated so the claim's boundary is explicit:

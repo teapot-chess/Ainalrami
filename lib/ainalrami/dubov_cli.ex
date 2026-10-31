@@ -1,18 +1,20 @@
 defmodule Ainalrami.DubovCLI do
   @moduledoc """
-  The command line's Dubov system (C.04.4.1): which system a file is paired
-  by, the options `Ainalrami.Dubov` takes from a parsed file and the flags,
-  and the words for its refusals. `Ainalrami.CLI` does the reading,
-  writing and replaying, exactly as for the Dutch system.
+  The command line's other FIDE Swiss systems - Dubov (C.04.4.1) and
+  Burstein (C.04.4.2): which system a file is paired by, the options
+  `Ainalrami.Dubov` and `Ainalrami.Burstein` take from a parsed file and
+  the flags, and the words for their refusals. `Ainalrami.CLI` does the
+  reading, writing and replaying, exactly as for the Dutch system. (The
+  module kept the name of the first system it served.)
 
   ## Which system
 
-  `192 FIDE_DUBOV` or `192 FIDE_DUBOV_BAKU` in the file, or
-  `--system=dubov` on the command line. The Baku code adds nothing of its
-  own: virtual points ride on the players (`XXA`/`250`, or
-  `--acceleration=baku`), as they do for the Dutch system. A flag that
-  contradicts the file's `192` is refused with exit 2 rather than either
-  one winning quietly.
+  `192 FIDE_DUBOV`/`FIDE_DUBOV_BAKU` or `192 FIDE_BURSTEIN`/`FIDE_BURSTEIN_BAKU`
+  in the file, or `--system=dubov|burstein` on the command line. The Baku
+  codes add nothing of their own: virtual points ride on the players
+  (`XXA`/`250`, or `--acceleration=baku`), as they do for the Dutch system.
+  A flag that contradicts the file's `192` is refused with exit 2 rather
+  than either one winning quietly.
 
   ## What the Dubov system takes
 
@@ -23,27 +25,43 @@ defmodule Ainalrami.DubovCLI do
     * the initial colour, the point system, `XXP` pairs, pre-recorded byes,
       as the Dutch system does.
 
+  ## What the Burstein system takes
+
+    * the round count - required: the seeding rounds (1.6.2) are counted
+      from it;
+    * the initial colour, the point system, `XXP` pairs, pre-recorded byes.
+      No ratings: the index is made of the tournament's own results.
+
   The organiser's own options (soft pairs, bye preferences and exclusions,
   pairing groups, the match format), `-x`, `--proof` and the explain
-  alternatives belong to the Dutch engine and are refused for a Dubov file.
+  alternatives belong to the Dutch engine and are refused for either.
   """
 
-  alias Ainalrami.{Dubov, TypeCode}
+  alias Ainalrami.{Burstein, Dubov, TypeCode}
 
-  @systems %{"dutch" => :dutch, "dubov" => :dubov}
-  @not_built ~w(burstein lim)
+  @systems %{"dutch" => :dutch, "dubov" => :dubov, "burstein" => :burstein}
+  @not_built ~w(lim)
+  @others [:dubov, :burstein]
 
-  # Flags the Dubov route does not have.
+  # Flags the Dubov and Burstein routes do not have.
   @refused ~w(proof cascade-order soft-pairs soft-position bye-exclude bye-want bye-want-soft
               bye-avoid bye-avoid-soft judge bye-alternatives float-alternatives
               alternative-pairs max-candidates force absent)
 
-  @doc "The flags a Dubov file refuses."
+  @doc "The flags a Dubov or Burstein file refuses."
   def refused_flags, do: @refused
 
+  @doc "The system's name in a sentence."
+  def name(:dubov), do: "Dubov system"
+  def name(:burstein), do: "Burstein system"
+
+  @doc "The system's name with its article number."
+  def title(:dubov), do: "the Dubov system (C.04.4.1)"
+  def title(:burstein), do: "the Burstein system (C.04.4.2)"
+
   @doc """
-  `:dutch`, `:dubov`, or `{:refuse, exit_code, message}` for a parsed file
-  and the value of `--system` (nil when not given).
+  `:dutch`, `:dubov`, `:burstein`, or `{:refuse, exit_code, message}` for a
+  parsed file and the value of `--system` (nil when not given).
   """
   def system(parsed, flag) do
     code = parsed.tournament[:type_code]
@@ -54,24 +72,28 @@ defmodule Ainalrami.DubovCLI do
         _ -> nil
       end
 
+    file_system =
+      case from_file do
+        {system, _code} when system in @others -> system
+        _ -> :dutch
+      end
+
     cond do
       flag in @not_built ->
-        {:refuse, 2, "--system=#{flag}: not built yet - this program pairs dutch and dubov"}
+        {:refuse, 2,
+         "--system=#{flag}: not built yet - this program pairs dutch, dubov and burstein"}
 
       flag != nil and not Map.has_key?(@systems, flag) ->
-        {:refuse, 1, "unknown --system \"#{flag}\" - dutch or dubov"}
+        {:refuse, 1, "unknown --system \"#{flag}\" - dutch, dubov or burstein"}
 
       flag == nil ->
-        if match?({:dubov, _}, from_file), do: :dubov, else: :dutch
+        file_system
 
-      flag == "dubov" and from_file in [nil] ->
-        :dubov
+      from_file == nil ->
+        @systems[flag]
 
-      flag == "dubov" and match?({:dubov, _}, from_file) ->
-        :dubov
-
-      flag == "dutch" and not match?({:dubov, _}, from_file) ->
-        :dutch
+      @systems[flag] == file_system ->
+        file_system
 
       true ->
         {_system, code} = from_file
@@ -117,14 +139,50 @@ defmodule Ainalrami.DubovCLI do
     ]
   end
 
-  @doc "Pairs the next round: `{:ok, pairs}` (the bye last, as `{rank, nil}`) or `{:error, message}`."
-  def pair(players, opts) do
+  @doc "The options `Ainalrami.Burstein` pairs a parsed file with."
+  def burstein_opts(tournament) do
+    [
+      expected_rounds: tournament[:number_of_rounds],
+      initial_colour: tournament[:initial_colour],
+      point_system: tournament[:point_system],
+      forbidden_pairs: tournament[:forbidden_pairs]
+    ]
+  end
+
+  @doc """
+  Pairs the next round by `system`: `{:ok, pairs}` (the bye last, as
+  `{rank, nil}`) or `{:error, message}`.
+  """
+  def pair(:dubov, players, opts) do
     case Dubov.pair_next_round(players, opts) do
       {:ok, pairs} -> {:ok, pairs}
       {:error, reason} -> {:error, describe(reason)}
     end
   end
 
+  def pair(:burstein, players, opts) do
+    case Burstein.pair_next_round(players, opts) do
+      {:ok, pairs} -> {:ok, pairs}
+      {:error, reason} -> {:error, describe_burstein(reason)}
+    end
+  end
+
+  @doc "What a refusal of `Ainalrami.Burstein.pair_round/2` means, in words."
+  def describe_burstein(:no_legal_pairing),
+    do:
+      "no legal pairing exists for this round under the Burstein system's absolute criteria " <>
+        "([C1] no rematch, [C3] no two players with the same absolute colour preference - " <>
+        "no topscorer exception); C.04.4.2 1.9.3 leaves the round to the Chief Arbiter"
+
+  def describe_burstein(:expected_rounds_required),
+    do:
+      "the Burstein system needs the tournament's round count (142/XXR or --rounds): " <>
+        "the seeding rounds (1.6.2) are counted from it"
+
+  def describe_burstein({:unsupported_option, key}),
+    do: "#{key} is not part of the Burstein system"
+
+  def describe_burstein(other), do: describe(other)
   @doc "What a refusal of `Ainalrami.Dubov.pair_round/2` means, in words."
   def describe(:no_legal_pairing),
     do:

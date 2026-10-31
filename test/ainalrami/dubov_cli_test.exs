@@ -107,8 +107,7 @@ defmodule Ainalrami.DubovCLITest do
     assert err =~ "contradicts"
   end
 
-  test "Burstein and Lim are not built; an unknown system is a usage error", ctx do
-    assert {_, _, 2} = cli([ctx.dutch, "-p", "--rounds=6", "--system=burstein"])
+  test "Lim is not built; an unknown system is a usage error", ctx do
     assert {_, _, 2} = cli([ctx.dutch, "-p", "--rounds=6", "--system=lim"])
     assert {_, err, 1} = cli([ctx.dutch, "-p", "--rounds=6", "--system=monrad"])
     assert err =~ "unknown --system"

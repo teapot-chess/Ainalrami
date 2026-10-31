@@ -22,6 +22,7 @@ defmodule Ainalrami.BursteinBbpTest do
   alias Ainalrami.Test.{Bbppairings, BursteinEvents}
 
   @moduletag :interop
+  @moduletag timeout: :infinity
 
   defp range(var, default) do
     case System.get_env(var) do

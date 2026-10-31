@@ -119,8 +119,8 @@ defmodule Ainalrami.Generator do
     format = if match_format, do: [match_format: true], else: []
     format = if groups == [], do: format, else: format ++ [groups: groups]
 
-    # `system: :dubov` pairs every round by C.04.4.1 instead (`Ainalrami.Dubov`)
-    # and says so in `192`. Absent, nothing below reads it, so every seed
+    # `system: :dubov` or `:burstein` pairs every round by C.04.4.1 or C.04.4.2
+    # instead (`Ainalrami.Dubov`, `Ainalrami.Burstein`) and says so in `192`. Absent, nothing below reads it, so every seed
     # pairs exactly as it always did.
     system = Keyword.get(opts, :system, :dutch)
 
@@ -129,14 +129,15 @@ defmodule Ainalrami.Generator do
         :dutch ->
           format
 
-        :dubov when format == [] ->
-          [system: :dubov]
+        s when s in [:dubov, :burstein] and format == [] ->
+          [system: s]
 
-        :dubov ->
-          raise ArgumentError, ":system :dubov is not paired with :match_format or :groups"
+        s when s in [:dubov, :burstein] ->
+          raise ArgumentError, ":system #{inspect(s)} is not paired with :match_format or :groups"
 
         other ->
-          raise ArgumentError, ":system must be :dutch or :dubov, not #{inspect(other)}"
+          raise ArgumentError,
+                ":system must be :dutch, :dubov or :burstein, not #{inspect(other)}"
       end
 
     # After the roster size and round count, so those two draw exactly as
@@ -258,6 +259,8 @@ defmodule Ainalrami.Generator do
 
   defp type_code(:dubov, _match, :baku), do: "FIDE_DUBOV_BAKU"
   defp type_code(:dubov, _match, _acceleration), do: "FIDE_DUBOV"
+  defp type_code(:burstein, _match, :baku), do: "FIDE_BURSTEIN_BAKU"
+  defp type_code(:burstein, _match, _acceleration), do: "FIDE_BURSTEIN"
 
   defp type_code(_dutch, match_format, _acceleration),
     do: if(match_format, do: "CUSTOM_SWISS")
@@ -552,6 +555,28 @@ defmodule Ainalrami.Generator do
       # 1.9.3's unpairable round ends the event, as a Dutch deadlock does.
       {:error, reason} ->
         raise Pairing.NoValidPairingError, message: "Dubov: #{inspect(reason)}"
+    end
+  end
+
+  defp pair_and_play(
+         players,
+         total_rounds,
+         outcomes,
+         {forbidden, [system: :burstein]},
+         initial_colour
+       ) do
+    opts = [
+      expected_rounds: total_rounds,
+      forbidden_pairs: forbidden,
+      initial_colour: initial_colour
+    ]
+
+    case Ainalrami.Burstein.pair_next_round(players, opts) do
+      {:ok, pairs} ->
+        play_pairs(players, pairs, outcomes)
+
+      {:error, reason} ->
+        raise Pairing.NoValidPairingError, message: "Burstein: #{inspect(reason)}"
     end
   end
 

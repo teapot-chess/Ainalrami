@@ -58,6 +58,23 @@ defmodule Ainalrami.Test.BursteinReference do
           end)
           |> length()
 
+        # Reading B4 (`:b4`): `:last_paired` (the default) - the run need only
+        # reach the last round paired; `:current_too` - the player must also
+        # sit out the round being paired (a zero-point bye recorded for it).
+        zero_run =
+          case opts[:b4] do
+            :current_too ->
+              now = Enum.at(p.games, round - 1)
+
+              if now != nil and now.opponent_rank == nil and
+                   not Trf.game_was_played?(now.result) and Trf.points_for_game(now, ps) == 0,
+                 do: zero_run,
+                 else: 0
+
+            _ ->
+              zero_run
+          end
+
         {p.rank, real.(p) + zero_run * ps.draw}
       end)
 
@@ -81,7 +98,7 @@ defmodule Ainalrami.Test.BursteinReference do
          {:ok, pairs} <- ref_brackets([], rest, st, []) do
       numbers = numbers(players, round)
       initial = if opts[:initial_colour] == "b", do: :b, else: :w
-      {:ok, %{pairs: MapSet.new(pairs, &colour(info, &1, numbers, initial)), bye: bye}}
+      {:ok, %{pairs: MapSet.new(pairs, &colour(info, &1, numbers, initial, opts[:b6])), bye: bye}}
     end
   end
 
@@ -90,7 +107,7 @@ defmodule Ainalrami.Test.BursteinReference do
   defp played?(g),
     do: is_integer(g.opponent_rank) and Trf.game_was_played?(g.result) and g.colour in ["w", "b"]
 
-  defp describe(p, round, ps, real, seen, _opts) do
+  defp describe(p, round, ps, real, seen, opts) do
     games = p.games |> Enum.take(round - 1) |> Enum.filter(&played?/1)
     cols = Enum.map(games, & &1.colour)
     cd = Enum.count(cols, &(&1 == "w")) - Enum.count(cols, &(&1 == "b"))
@@ -115,7 +132,15 @@ defmodule Ainalrami.Test.BursteinReference do
       for r <- 1..(round - 1)//1 do
         g = Enum.at(p.games, r - 1)
         pts = if g, do: Trf.points_for_game(g, ps), else: 0.0
-        opp = if g && played?(g), do: seen[g.opponent_rank], else: own
+        # Reading B3 (`:b3`): `:own_score` (the default) - against himself;
+        # `:nothing` - an unplayed round adds nothing to either sum.
+        opp =
+          cond do
+            g && played?(g) -> seen[g.opponent_rank]
+            opts[:b3] == :nothing -> 0.0
+            true -> own
+          end
+
         {opp, pts * opp}
       end
 
@@ -311,10 +336,17 @@ defmodule Ainalrami.Test.BursteinReference do
     |> Map.new()
   end
 
-  defp colour(info, {x, y}, numbers, initial) do
+  # Reading B6 (`:b6`): `:index` (the default) ranks by 1.8; `:score` by
+  # points first, as the Dubov and Dutch systems do.
+  defp colour(info, {x, y}, numbers, initial, b6) do
     a = info[x]
     b = info[y]
-    {hi, lo} = if {-a.bh, -a.sb, a.rank} < {-b.bh, -b.sb, b.rank}, do: {a, b}, else: {b, a}
+
+    key = fn i ->
+      if b6 == :score, do: {-i.score, -i.bh, -i.sb, i.rank}, else: {-i.bh, -i.sb, i.rank}
+    end
+
+    {hi, lo} = if key.(a) < key.(b), do: {a, b}, else: {b, a}
 
     white =
       cond do
