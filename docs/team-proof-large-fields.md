@@ -248,7 +248,7 @@ instead of an enumeration with a budget. That engine change was made on
 
 Code: `test/support/team_proof/large_events.ex` (the events),
 `test/support/team_proof/round_checker.ex` (the checker),
-`test/ainalrami/team_proof_xl_test.exs`, runner `tools/team_large_run.py`.
+`test/ainalrami/team_proof_xl_test.exs`, runner `tools/team_large_run.exs`.
 
 ### Does the exact reference reach 200 teams? Yes
 
@@ -365,7 +365,7 @@ size, not the engine.
     # 100-200 teams: scale mode never fails on a disagreement, it writes
     # failures/seed_N_round_R.txt and prints a count
     TEAM_XL_SEEDS="1..20" mix test test/ainalrami/team_proof_xl_test.exs --only whole_rounds_xl
-    py -3 -u tools/team_large_run.py --first 1 --last 14000 --workers 6   # the long run, resumable
+    elixir tools/team_large_run.exs --first 1 --last 14000 --workers 6   # the long run, resumable
 
 On this machine every `mix` run here used `ELIXIR_ERL_OPTIONS="+S 2:2"`.
 

@@ -472,10 +472,10 @@ that graph has a perfect matching, which is polynomial in the field size.
 
 `tools/exhaustion_matching.exs` builds the graph with the brute-force tool's
 reading of the rules (copied, since the 4.8 million positive controls had
-already validated it) and writes it out; `tools/exhaustion_matching.py` solves
-it. The solving shares no code with `Ainalrami.Pairing`, `Ainalrami.Matching`
-or `Ainalrami.WeightedMatching`, and uses two unrelated algorithms that must
-agree on the SIZE of the maximum matching, not only on whether it is perfect:
+already validated it) and solves it. The solving shares no code with
+`Ainalrami.Pairing`, `Ainalrami.Matching` or `Ainalrami.WeightedMatching`. The
+2026-10-12 run used two unrelated algorithms that had to agree on the SIZE of
+the maximum matching, not only on whether it is perfect:
 
 * networkx 3.6.1 `max_weight_matching(maxcardinality=True)`, a third-party
   implementation of Edmonds' blossom algorithm. An independent library was
@@ -486,6 +486,16 @@ agree on the SIZE of the maximum matching, not only on whether it is perfect:
   rank that is too low, with probability at most N/p (about 2e-17) per graph.
 
 It was run on every refusal, and on every positive control up to 24 players.
+
+*Tooling note (2026-10-31).* The solver was a Python script
+(`tools/exhaustion_matching.py`, networkx and the Tutte rank). The repo has no
+Python of its own any more, so the script was removed and the Tutte-rank half
+was ported into `tools/exhaustion_matching.exs` itself. The networkx blossom
+cross-check was not ported: a re-run now rests a "no legal pairing" verdict
+above 12 players on the Tutte rank alone (a probabilistic "none", at most
+2e-17 per graph, never a false "legal") and, up to 12 players, on enumeration
+as well. A 40-seed re-run on the port (548 positions, 31 refusals, 170 compared
+with enumeration) flagged nothing. The figures above are the two-solver run's.
 
 **Cross-check against enumeration, 4-12 players.** Over the same graphs the
 tool also enumerates every perfect matching (n <= 12). 101,736 positions
@@ -1799,7 +1809,7 @@ reading.
 teams sitting a round out, either initial colour) through the engine and
 compares every round with the brute-force reference
 (`test/support/team_proof/naive_reference.ex`): who meets whom, the bye,
-and the colours. `mix test` runs 90 seeds; `tools/team_validation_run.py`
+and the colours. `mix test` runs 90 seeds; `tools/team_validation_run.exs`
 runs the same test many times at once on separate seed ranges and is
 resumable. The long run covered seeds 1-250,000,000 - 1,032,949,115 team
 rounds - with no failure and no error, finishing 2026-09-26 on Ainalrami
@@ -1846,8 +1856,8 @@ robins).
 
 | direction | generator | tournaments | values | unexplained | known |
 |---|---|---|---|---|---|
-| 1 | Ainalrami (`tools/tiebreak_corpus.exs`, `tools/tiebreak_direction1.py`) | 50,060 | ~29 million | 0 | 147,873 in the last 38,000 |
-| 2 | TieBreakServer's `tournamentgenerator.py` (`tools/tiebreak_direction2.py`) | 50,000 | 49,987,100 | 0 | 2,039 |
+| 1 | Ainalrami (`tools/tiebreak_corpus.exs`, `tools/tiebreak_direction1.exs`) | 50,060 | ~29 million | 0 | 147,873 in the last 38,000 |
+| 2 | TieBreakServer's `tournamentgenerator.py` (`tools/tiebreak_direction2.exs`) | 50,000 | 49,987,100 | 0 | 2,039 |
 | teams | board-level team events (`tools/team_tiebreak_compare.exs`) | 2,200 | ~405,000 | 0 | 11 |
 
 Run 2026-09-23/24 on the development PC. Direction 2 used six setups in

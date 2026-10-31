@@ -27,6 +27,7 @@ on:
       - "lib/ainalrami/tiebreaks/**"
       - "lib/ainalrami/trf.ex"
       - "tools/tiebreak_*"
+      - "tools/chunk_runner.exs"
       - "tools/team_tiebreak_compare.exs"
       - "test/ainalrami/tiebreak_reference_test.exs"
       - "test/support/tiebreak_reference/**"
@@ -59,7 +60,8 @@ jobs:
         elixir-version: '1.20'
         otp-version: '29.0'
 
-    - name: Set up Python
+    # TieBreakServer is Python; only it needs this. Our own drivers are Elixir.
+    - name: Set up Python (for TieBreakServer)
       uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
       with:
         python-version: '3.13'
@@ -113,20 +115,20 @@ jobs:
     - name: Direction 1 (Ainalrami's generator, 100 tournaments, random lists)
       if: always()
       run: |
-        if ! python tools/tiebreak_direction1.py --batches 1 --size 100 --workers 2 \
+        if ! elixir tools/tiebreak_direction1.exs --batches 1 --size 100 --workers 2 \
              --first-seed "$D1_FIRST" --random-lists "$SEED_BASE" --strict \
              --work "$FAIL_DIR/direction1" --state "$RUNNER_TEMP/d1.json"; then
-          echo "::error title=Direction 1 differs::seed base $SEED_BASE. Reproduce: python tools/tiebreak_direction1.py --batches 1 --size 100 --first-seed $D1_FIRST --random-lists $SEED_BASE --strict --work DIR --state s.json (files in the artifact)"
+          echo "::error title=Direction 1 differs::seed base $SEED_BASE. Reproduce: elixir tools/tiebreak_direction1.exs --batches 1 --size 100 --first-seed $D1_FIRST --random-lists $SEED_BASE --strict --work DIR --state s.json (files in the artifact)"
           exit 1
         fi
 
     - name: Direction 2 (TieBreakServer's generator, 102 tournaments, random lists)
       if: always()
       run: |
-        if ! python tools/tiebreak_direction2.py --batches 6 --size 17 --workers 2 \
+        if ! elixir tools/tiebreak_direction2.exs --batches 6 --size 17 --workers 2 \
              --first-batch "$D2_BATCH" --random-lists "$SEED_BASE" --strict \
              --work "$FAIL_DIR/direction2" --state "$RUNNER_TEMP/d2.json"; then
-          echo "::error title=Direction 2 differs::seed base $SEED_BASE. Reproduce: python tools/tiebreak_direction2.py --batches 6 --size 17 --first-batch $D2_BATCH --random-lists $SEED_BASE --strict --work DIR --state s.json (files in the artifact)"
+          echo "::error title=Direction 2 differs::seed base $SEED_BASE. Reproduce: elixir tools/tiebreak_direction2.exs --batches 6 --size 17 --first-batch $D2_BATCH --random-lists $SEED_BASE --strict --work DIR --state s.json (files in the artifact)"
           exit 1
         fi
 

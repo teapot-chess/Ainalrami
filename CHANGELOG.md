@@ -66,6 +66,7 @@ with the reference on every one of them.
 
 ## [Unreleased]
 
+- [Change] **No Python left in `tools/`.** Seven scripts, 936 lines, and the one language the repo was not written in. Six are ported, and the first three share a new runner: `team_validation_run`, `team_large_run` and `team_large_status` are `.exs` now (`tools/chunk_runner.exs` holds the resumable queue, the workers and the state file, which keeps its old layout so a run can be resumed across the change); `tiebreak_direction1` and `tiebreak_direction2` are `.exs` too, on a shared `tools/tiebreak_batches.exs`, and the nightly workflow calls them with `elixir` (Python stays in that job for one reason, TieBreakServer is Python); `rule_check_round` is `rule_check_round.exs`, byte-for-byte the same verdicts on the fixture it was checked against. The seventh, `exhaustion_matching.py`, was the solver half of the 2026-10-12 refusal proof; its Tutte-rank half moved into `exhaustion_matching.exs`, the networkx blossom half did not (nothing to port it to without writing the blossom, which is the thing the library was chosen to avoid), so a rerun is one solver plus enumeration where the original run had two. `docs/validation.md` says so. Every ported tool was run on a small input before the old one went; `team_large_start.cmd` starts the `.exs`.
 - [Fix] **`--proof=FILE` no longer eats the file it is aimed at.** Pointed at the input TRF, it replaced the tournament with its own proof; pointed at `-p`'s output, the board list replaced the proof. Both exited 0, which is the part that hurts. Either collision is now refused, naming both paths, before anything is opened - a refused run touches nothing. Paths are compared expanded, and case-blind on Windows and macOS, because their filesystems are.
 
 ## [0.48.0] - 2026-10-28
@@ -140,8 +141,10 @@ with the reference on every one of them.
   players too, by matching rather than enumeration.** A legal complete
   pairing exists iff the graph of allowed pairs (plus a dummy vertex for the
   bye) has a perfect matching; `tools/exhaustion_matching.exs` builds that
-  graph and `tools/exhaustion_matching.py` solves it with networkx's blossom
-  algorithm and, independently, a random Tutte-matrix rank. Agreed with
+  graph and solved it with networkx's blossom
+  algorithm and, independently, a random Tutte-matrix rank (the solver was a
+  Python script, `exhaustion_matching.py`; ported to the `.exs` 2026-10-31,
+  Tutte rank only, see the Unreleased entry). Agreed with
   enumeration on 101,736 positions up to 12 players, then proved 3,839
   refusals on 11-40-player fields (10,000 tournaments), with 163,877 positive
   controls, 0 disagreements. It does not re-measure this engine, and covers
@@ -921,7 +924,7 @@ with the reference on every one of them.
   `docs/validation.md`.
 
 - [Verified] **Team Swiss whole rounds, a billion of them.**
-  `tools/team_validation_run.py` ran `team_pairing_validation_test.exs`
+  `tools/team_validation_run.py` (now `.exs`, 2026-10-31) ran `team_pairing_validation_test.exs`
   on seeds 1-250,000,000: 1,032,949,115 rounds of 4-10 teams, engine
   against the brute-force reference written from C.04.6, 0 failures and
   0 errors (finished 2026-09-26, commit `d0f16e8`). README and
@@ -1032,7 +1035,7 @@ with the reference on every one of them.
   compares tie-breaks with FIDE's TieBreakServer (pinned commit) in both
   directions, on team events, and against the independent reference, on
   fresh seeds each night; a failure names the seed and uploads the files.
-  `tools/tiebreak_direction1.py`/`direction2.py` gain `--strict`,
+  `tools/tiebreak_direction1`/`direction2` (then Python, now `.exs`) gain `--strict`,
   `tools/team_tiebreak_compare.exs` gains `--work DIR` (docs/validation.md).
 - [Feature] **The checker verifies team standings.** `Ainalrami.Trf` reads
   and writes TRF26's team records: `310` (team number, name, nickname,

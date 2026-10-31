@@ -22,13 +22,13 @@
 # million positive controls already validated it. Nothing is shared with
 # `Ainalrami.Pairing`, `Ainalrami.Matching` or `Ainalrami.WeightedMatching`.
 #
-# The SOLVING half is `tools/exhaustion_matching.py`, which uses two unrelated
-# algorithms that must agree on the size of the maximum matching:
-#
-#   * networkx `max_weight_matching(maxcardinality=True)` - Edmonds' blossom
-#     algorithm, a third-party library;
-#   * the rank of a random Tutte matrix over GF(2^61 - 1) - algebraic, no
-#     blossoms.
+# The SOLVING half is `Solver` below: the size of the maximum matching is the
+# rank of a random Tutte matrix over GF(2^61 - 1) - algebraic, no blossoms.
+# The 2026-10-12 run also had a Python half (networkx's blossom matching,
+# which had to agree on the size); that half was retired with the Python on
+# 2026-10-31, so "none" verdicts above 12 players now rest on the Tutte rank
+# alone (wrong with probability at most N/p, about 2e-17, and only ever
+# towards "none"), and enumeration for 12 players and fewer.
 #
 # For fields up to 12 players this file also enumerates over the same graph,
 # so the matching answer can be checked against enumeration position by
@@ -49,9 +49,9 @@
 #   MIX_ENV=test mix run tools/exhaustion_matching.exs FROM TO ROUNDS MIN MAX [DUMP_DIR]
 #
 # Env: MATCH_CHUNK (seeds per solver batch, default 1500), MATCH_GEN (Elixir
-# generator concurrency, default schedulers-4), MATCH_PY (solver processes,
+# generator concurrency, default schedulers-4), MATCH_SOLVE (solver processes,
 # default same), PAIRING_FUZZ_* (the generator knobs, as for the probe).
-# Needs `py -3` with networkx. bbpPairings located as in
+# bbpPairings located as in
 # `Ainalrami.Test.Bbppairings` (BBPPAIRINGS_EXE or the sibling OpenPairings
 # copy). Disagreements are written to DUMP_DIR as TRF + graph line.
 
@@ -318,6 +318,125 @@ defmodule Driver do
   end
 end
 
+defmodule Solver do
+  # Decides, for one position line, whether a complete legal pairing exists.
+  # Shares no code with Ainalrami. The answer is the size of a maximum matching,
+  # read off the rank of a random Tutte matrix over GF(2^61 - 1) (Lovasz 1979):
+  # maximum matching = rank / 2. Algebraic, no blossoms. It can only err by
+  # reporting a rank that is too LOW, with probability at most N/p (about
+  # 2e-17) per graph; a rank it reports is never too high, so a "legal"
+  # verdict is certain and a "none" verdict is probabilistic.
+  #
+  # (Until 2026-10-31 a Python half also ran networkx's blossom matching next
+  # to this and the two had to agree. That half is retired with the Python;
+  # the 2026-10-12 results in docs/validation.md were produced with both.)
+  #
+  # An odd field is handled by one dummy vertex joined to every bye-eligible
+  # player: the field can be paired iff the extended graph has a perfect
+  # matching, the dummy's partner being the player who sits out.
+  #
+  # Line format (tab separated): kind seed round n enum witness byehex rows,
+  # each row the hex bitmask of that player's legal opponents.
+
+  import Bitwise
+
+  @p (1 <<< 61) - 1
+
+  def solve(line) do
+    [kind, seed, rnd, n, enum, witness, byehex, rows] = String.split(String.trim_trailing(line, "\n"), "\t")
+    {seed, rnd, n} = {String.to_integer(seed), String.to_integer(rnd), String.to_integer(n)}
+    base = %{kind: kind, seed: seed, rnd: rnd, n: n, enum: enum, witness: witness, line: line}
+
+    if n == 0 do
+      Map.put(base, :verdict, "empty")
+    else
+      rows = rows |> String.split(",") |> Enum.map(&String.to_integer(&1, 16))
+      bye = String.to_integer(byehex, 16)
+      size_n = n + rem(n, 2)
+      pairs = tutte_size(size_n, edges(n, rows, bye), :rand.seed_s(:exsss, {seed, rnd, 1}))
+      Map.merge(base, %{verdict: if(pairs * 2 == size_n, do: "legal", else: "none"), tutte_pairs: pairs})
+    end
+  end
+
+  defp edges(n, rows, bye) do
+    row = List.to_tuple(rows)
+
+    inner = for i <- 0..(n - 1), j <- (i + 1)..(n - 1)//1, (elem(row, i) >>> j &&& 1) == 1, do: {i, j}
+    dummy = if rem(n, 2) == 1, do: for(i <- 0..(n - 1), (bye >>> i &&& 1) == 1, do: {i, n}), else: []
+    inner ++ dummy
+  end
+
+  defp tutte_size(size_n, edges, rng) do
+    {cells, _} =
+      Enum.reduce(edges, {%{}, rng}, fn {i, j}, {m, st} ->
+        {x, st} = :rand.uniform_s(@p - 1, st)
+        {m |> Map.put({i, j}, x) |> Map.put({j, i}, @p - x), st}
+      end)
+
+    rows = for i <- 0..(size_n - 1), do: for(j <- 0..(size_n - 1), do: Map.get(cells, {i, j}, 0))
+    div(rank(rows, 0), 2)
+  end
+
+  # Gaussian elimination mod p over a list of rows; returns the rank.
+  defp rank([], acc), do: acc
+
+  defp rank(rows, acc) do
+    case Enum.split_while(rows, fn [h | _] -> h == 0 end) do
+      {_, []} ->
+        # No pivot in this column: drop it.
+        rank(Enum.map(rows, &tl/1) |> drop_empty(), acc)
+
+      {zeros, [[pv | _] = prow | rest]} ->
+        inv = pow(pv, @p - 2)
+
+        reduced =
+          for [h | t] <- zeros ++ rest do
+            if h == 0 do
+              t
+            else
+              f = rem(h * inv, @p)
+              Enum.zip_with(t, tl(prow), fn a, b -> Integer.mod(a - f * b, @p) end)
+            end
+          end
+
+        rank(drop_empty(reduced), acc + 1)
+    end
+  end
+
+  defp drop_empty(rows), do: Enum.reject(rows, &(&1 == []))
+
+  defp pow(b, e), do: :crypto.mod_pow(b, e, @p) |> :binary.decode_unsigned()
+
+  @doc "Counts and flagged positions, as the report prints them."
+  def summarize(results) do
+    Enum.reduce(results, {%{}, []}, fn r, {counts, bad} ->
+      k = r.kind
+      counts = counts |> inc("#{k}:total") |> inc("#{k}:#{r.verdict}") |> inc("n:#{k}:#{r.n}")
+
+      flags =
+        if r.verdict == "empty" do
+          ["empty_field"]
+        else
+          List.flatten([
+            if(r.enum != "-" and r.enum != r.verdict, do: ["matching_vs_enum matching=#{r.verdict} enum=#{r.enum}"], else: []),
+            if(k == "refusal" and r.verdict != "none", do: ["refusal_but_legal_pairing_exists"], else: []),
+            if(k == "control" and r.verdict != "legal", do: ["control_says_none"], else: []),
+            if(k == "control" and r.witness != "ok", do: ["witness_" <> r.witness], else: [])
+          ])
+        end
+
+      counts = if r.verdict != "empty" and r.enum != "-", do: inc(counts, "enum:compared"), else: counts
+
+      if flags == [],
+        do: {counts, bad},
+        else: {inc(counts, "flagged"), [%{flags: flags, line: String.trim_trailing(r.line, "\n")} | bad]}
+    end)
+    |> then(fn {counts, bad} -> {counts, Enum.reverse(bad)} end)
+  end
+
+  defp inc(map, key), do: Map.update(map, key, 1, &(&1 + 1))
+end
+
 # ---------------------------------------------------------------- driver
 
 args = System.argv()
@@ -329,8 +448,7 @@ max_p = String.to_integer(Enum.at(args, 4, "20"))
 dump_dir = Enum.at(args, 5, "tmp/matching_dumps")
 chunk = String.to_integer(System.get_env("MATCH_CHUNK", "1500"))
 gen = String.to_integer(System.get_env("MATCH_GEN", "#{max(System.schedulers_online() - 4, 1)}"))
-py = String.to_integer(System.get_env("MATCH_PY", "#{gen}"))
-solver = Path.join(__DIR__, "exhaustion_matching.py")
+py = String.to_integer(System.get_env("MATCH_SOLVE", "#{gen}"))
 work = Path.join(System.tmp_dir!(), "exh-matching-#{System.unique_integer([:positive])}")
 
 File.mkdir_p!(dump_dir)
@@ -357,18 +475,24 @@ merge = fn a, b -> Map.merge(a, b, fn _k, x, y -> x + y end) end
 
     errors = for {:error, m} <- results, do: m
     positions = for {:position, line, trf} <- results, do: {line, trf}
-    path = Path.join(work, "chunk.tsv")
-    File.write!(path, Enum.map(positions, fn {l, _} -> [l, "\n"] end))
     t1 = System.monotonic_time(:millisecond)
 
-    {json, 0} = System.cmd("py", ["-3", "-I", solver, path, "#{py}"])
+    solved =
+      positions
+      |> Task.async_stream(fn {l, _} -> Solver.solve(l) end,
+        max_concurrency: py,
+        timeout: :infinity,
+        ordered: false
+      )
+      |> Enum.map(fn {:ok, r} -> r end)
+
+    {counts, bad} = Solver.summarize(solved)
     t2 = System.monotonic_time(:millisecond)
 
-    %{"counts" => counts, "bad" => bad} = JSON.decode!(json)
     trf_by_line = for {l, t} <- positions, t, into: %{}, do: {l, t}
 
     bad =
-      for %{"flags" => f, "line" => l} <- bad do
+      for %{flags: f, line: l} <- bad do
         %{flags: f, line: l, trf: Map.get(trf_by_line, l)}
       end
 
@@ -393,7 +517,6 @@ IO.puts("  positive controls (rounds bbpPairings paired): #{g.("control:total")}
 IO.puts("    solver found a legal pairing:             #{g.("control:legal")}")
 IO.puts("    solver said none (oracle too strict):     #{g.("control:none")}")
 IO.puts("  empty active fields:                        #{g.("refusal:empty") + g.("control:empty")}")
-IO.puts("  networkx vs Tutte-rank compared on:         #{g.("tutte:compared")} positions")
 IO.puts("  matching vs enumeration compared on:        #{g.("enum:compared")} positions (n <= 12)")
 IO.puts("  flagged positions:                          #{g.("flagged")}")
 IO.puts("  harness errors:                             #{length(errors)}")
@@ -426,7 +549,7 @@ end
 for e <- Enum.take(errors, 10), do: IO.puts("  ERROR #{e}")
 
 if bad_all == [] do
-  IO.puts("\n  No disagreement. Every refusal is proved by two independent solvers.")
+  IO.puts("\n  No disagreement. Every refusal agrees with the Tutte-rank solver (and with enumeration up to 12 players).")
 else
   IO.puts("\n  #{length(bad_all)} FLAGGED position(s) - dumping to #{dump_dir}")
 

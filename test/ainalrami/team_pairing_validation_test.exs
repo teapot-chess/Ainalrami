@@ -54,7 +54,7 @@ defmodule Ainalrami.TeamPairingValidationTest do
   # ==================================================================
 
   describe "whole rounds against the brute-force reference (4-10 teams)" do
-    # The same test is the long validation run. `tools/team_validation_run.py`
+    # The same test is the long validation run. `tools/team_validation_run.exs`
     # starts many copies of it, each on its own seed range through
     # TEAM_VALIDATION_SEEDS ("first..last"); without the variable it is the
     # ordinary 90-seed test. In a run the per-round statistics are not kept -
