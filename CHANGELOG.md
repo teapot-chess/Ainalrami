@@ -66,6 +66,8 @@ with the reference on every one of them.
 
 ## [Unreleased]
 
+- [Change] **All rights reserved.** The Apache License 2.0 was a generous document for an engine that has decided to keep its own counsel. LICENSE is now a short all-rights-reserved notice and the README agrees. The parts derived from bbpPairings are another matter: that licence is Apache and is not ours to retire, so NOTICE keeps the attribution and the Apache text now sits in THIRD_PARTY and ships in the release archives. Releases already published under the Apache licence keep it, since a licence granted cannot be taken back; the new terms apply from here on.
+
 ## [0.50.0] - 2026-11-01
 
 - [Change] **Burstein and Lim ship before FIDE has said a word about them.** Both are readings of the 2026 rules, and the questions those readings raised (twelve for Burstein, fifteen for Lim) have not yet reached the Systems of Pairings and Programs Commission, let alone come back. They pair, they are tested, and they are not yet checked by anyone with a vote. A program that pairs Dutch is unaffected.

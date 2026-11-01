@@ -162,7 +162,7 @@ jobs:
       shell: pwsh
       run: |
         $rel = "_build/prod/rel/ainalrami"
-        Copy-Item LICENSE, NOTICE $rel
+        Copy-Item LICENSE, NOTICE, THIRD_PARTY $rel -Recurse
         New-Item -ItemType Directory -Force dist | Out-Null
         if ($env:RUNNER_OS -eq 'Windows') {
           Compress-Archive -Path $rel -DestinationPath "dist/${{ matrix.archive }}"

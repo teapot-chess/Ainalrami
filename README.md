@@ -1243,26 +1243,21 @@ Ainalrami is also meant to stand alone: experimentation with pairing
 variants JaVaFo doesn't expose, and an independent data point for
 cross-checking pairing correctness against any other engine.
 
-## License
+## Licence
 
-[Apache License 2.0](LICENSE) - deliberately the same licence as
-[bbpPairings](https://github.com/BieremaBoyzProgramming/bbpPairings),
-because parts of this engine are derived from it. `Ainalrami.Pairing`'s
-bracket cascade is a stage-for-stage port of `dutch.cpp`, and
-`Ainalrami.WeightedMatching`'s control flow was read directly from
-bbpPairings' matching sources while writing the Elixir equivalent.
+Copyright (c) 2026 teapot-chess. All rights reserved. No licence is granted to
+use, copy, modify or distribute this software. See [LICENSE](LICENSE).
 
-No bbpPairings code is reproduced here - it is C++ and this is Elixir -
-but the algorithm and structure are theirs, originating file and line
-numbers are cited inline throughout, and matching their licence is the
-cleanest way to honour that rather than leaving it ambiguous.
-[NOTICE](NOTICE) spells out exactly which files are derived and what
-changed.
-
-Deliberately permissive: a pairing engine is only worth anything if other
-people can check it, run it against their own tournaments and disagree with
-it in public. Use it, fork it, ship it in something commercial - the terms
-ask only that you keep the notices. Copyright 2026 Jorian Burssens.
+One exception, and it is not ours to waive: parts of this engine are derived
+from [bbpPairings](https://github.com/BieremaBoyzProgramming/bbpPairings),
+which is Apache License 2.0. `Ainalrami.Pairing`'s bracket cascade is a
+stage-for-stage port of `dutch.cpp`, and `Ainalrami.WeightedMatching`'s control
+flow was read directly from bbpPairings' matching sources. No bbpPairings code
+is reproduced here - it is C++ and this is Elixir - but the algorithm and
+structure are theirs, so the attribution and the Apache text stay with the
+project ([NOTICE](NOTICE), [THIRD_PARTY](THIRD_PARTY)), and [NOTICE](NOTICE)
+spells out exactly which files are derived and what changed. Releases published
+before 2026-11-01 keep the Apache 2.0 licence they were published under.
 
 The vendored bbpPairings binaries and JaVaFo are covered separately; see
 [NOTICE](NOTICE).
