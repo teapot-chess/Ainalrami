@@ -1,8 +1,9 @@
 Ainalrami
-Copyright 2026 Jorian Burssens
+Copyright (c) 2026 teapot-chess. All rights reserved; see LICENSE.
 
-This product is licensed under the Apache License, Version 2.0. The full
-text of the license is in LICENSE.
+The parts derived from BBP Pairings (below) stay subject to the notice and
+attribution terms of the Apache License, Version 2.0 under which BBP Pairings
+is distributed; its text is in THIRD_PARTY/bbpPairings-Apache-2.0.txt.
 
 --------------------------------------------------------------------------
 Attribution: BBP Pairings
@@ -34,7 +35,7 @@ that plainly here rather than leaving it to be inferred:
     Pairings is the specific implementation structure.
 
 Changes made relative to BBP Pairings, as required by section 4(b) of the
-License: the code is a reimplementation in a different language and is not
+Apache License 2.0: the code is a reimplementation in a different language and is not
 a line-for-line translation. Ainalrami.WeightedMatching originally omitted
 BBP Pairings' incremental caches (minOuterEdges, per-blossom
 minOuterEdgeResistance) and rescanned instead, trading the O(n^3) bound
