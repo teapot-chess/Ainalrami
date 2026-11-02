@@ -46,6 +46,28 @@ failures rather than quietly dropped, so nobody re-derives them.
 
 ## Done
 
+### 2026-11-02 - the ten-day run, stopped after seven days
+
+Started 2026-10-26 16:20 UTC on the 80-core VM to raise the three-way
+number, the weakest on record at 649,207 rounds. Stopped by hand on
+2026-11-02 at about 16:18 UTC, about seven of the planned ten days, judged
+enough. Only chunks that reached "Finished in" count; the 26 cut off by the
+stop were discarded.
+
+Seven axes, 14 lanes: half against bbpPairings 6.0.0 (chunks of 150,000
+tournaments), half three-way with bbpPairings and Gacrux (chunks of
+10,000), plus big-field lanes (400-1000 players, 7-11 rounds) added
+2026-10-27. Result: 414,606,291 two-way rounds (4,609,130,461 boards) with
+2 differing rounds, both bbpPairings' known second-PAB defect (a player who
+already had a pairing-allocated bye got another); 35,567,333 three-way
+rounds with Ainalrami never the odd one out and 100% agreement on who is
+White; big fields at 100% in both harnesses. Gacrux crashed on 0.93% of
+attempted rounds, all in its own code, and cost 96 comparisons. Full
+tables in [validation.md](validation.md#the-ten-day-run-2026-10-26-to-2026-11-02).
+
+Nothing in the engine changed. The run measured it. The three-way bound
+is now about 55 times tighter, which was the point.
+
 ### 2026-08-27 - Article 5.2.5 went the other way, and one of our arguments was already false
 
 The FIDE Systems of Pairings and Programs Commission answered the question
