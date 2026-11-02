@@ -15,7 +15,9 @@ every known difference.
 | area | compared against | size | result | detail |
 |---|---|---|---|---|
 | Individual pairings (C.04.3), our generator | bbpPairings 6.0.0 | 2,536,328,265 pairings, 217,470,056 rounds, 6 corpora | 2 disagreements, both a bbpPairings [C2] defect | [The corpora](#the-corpora) |
-| Individual pairings, three engines | bbpPairings and Gacrux | 649,207 rounds | agrees with bbpPairings on every round; never the odd one out | [The three-way run](#the-three-way-run-2026-08-27) |
+| Individual pairings, three engines | bbpPairings and Gacrux | 35,567,333 rounds (ten-day run, 2026-11-02; 649,207 in the 2026-08-27 run) | agrees with bbpPairings on every round; never the odd one out | [The ten-day run](#the-ten-day-run-2026-10-26-to-2026-11-02) |
+| Individual pairings, ten-day run, two-way | bbpPairings 6.0.0 | 414,606,291 rounds, 4,609,130,461 boards | 2 disagreements, both a bbpPairings second-PAB defect | [The ten-day run](#the-ten-day-run-2026-10-26-to-2026-11-02) |
+| Individual pairings, big fields (400-1000 players) | bbpPairings; bbpPairings and Gacrux | 117,824 rounds two-way; 69,254 rounds three-way | 100% on both, 0 illegal | [The ten-day run](#the-ten-day-run-2026-10-26-to-2026-11-02) |
 | Individual pairings, Gacrux alone (030bd28) | Gacrux | 373,500 tournaments, 3,219,728 rounds, 119,064,367 boards | 0 disagreements | [Against Gacrux alone](#against-gacrux-alone-32-million-rounds-2026-09-30) |
 | Individual pairings, 0.36.0 release check (be3ae86), partial | Gacrux; bbpPairings | 1,014,700 rounds; 10,614,756 rounds | Gacrux: 258 disagreements judged by rule, this engine legal in every well-formed one, Gacrux illegal in 257 (1 ambiguous input); bbpPairings: 1, a bbpPairings C2 defect | [Release check for 0.36.0](#release-check-for-0360-2026-10-02) |
 | Individual pairings, bbpPairings' generator (Q33 direction 2) | bbpPairings' own `-g` tournaments, checked here | 50,045 tournaments, 499,816 rounds, 28,964,816 pairings | 0 composition, 0 colour disagreements | [Pairings (Q33)](#pairings-vcl4thp-q33-both-directions) |
@@ -146,7 +148,9 @@ three it could never have been the thing that found them.
 **The limit of all of it.** Every one of those 2.5 billion pairings is
 measured against a SINGLE oracle, and agreement with one reference cannot
 detect a rule both engines read the same wrong way. The only instrument
-that can is the three-way harness, and it has run 649,207 rounds - see
+that can is the three-way harness. It had run 649,207 rounds; the
+[ten-day run](#the-ten-day-run-2026-10-26-to-2026-11-02) of 2026-11-02 took
+it to 35,567,333 more, with Ainalrami never the odd one out - see
 [The references](#the-references) for what that does and does not bound.
 
 ## The corpus
@@ -626,6 +630,83 @@ single legal opponent. There is no scoring argument to make about it.
 Written up in `docs/bbppairings-c2-bug-report.md`, decoded position by
 position in `test/fixtures/fe1_disputes/README.md`, and pinned by
 `test/ainalrami/c2_second_bye_test.exs`.
+
+### The ten-day run (2026-10-26 to 2026-11-02)
+
+Run to raise the three-way number, which was the weakest on this page. It
+started 2026-10-26 16:20 UTC on the 80-core VM and was stopped by hand on
+2026-11-02 at about 16:18 UTC: roughly seven of the planned ten days, judged
+enough. Only chunks whose log reached "Finished in" are counted; the 26
+chunks cut off by the stop are discarded. All figures below are aggregated
+from the per-chunk logs.
+
+**Setup.** Seven axes (byes, colour, everything, forfeits, ratings, rounds,
+withdrawals), each in two lanes, so 14 lanes, half the cores each:
+
+* **Two-way**, Ainalrami against bbpPairings 6.0.0, in chunks of 150,000
+  tournaments, seeds from 100,000,001 + axis x 10,000,000.
+* **Three-way**, Ainalrami, bbpPairings and Gacrux, in chunks of 10,000
+  tournaments, seeds from 200,000,001 + axis x 1,000,000.
+* **Big fields**, added 2026-10-27: 400-1000 players, 7-11 rounds, mild
+  byes, forfeits and withdrawals, seeds 300,000,001 (two-way) and
+  310,000,001 (three-way).
+
+Each lane ran chunk after chunk until the deadline or a stop file.
+
+**Against bbpPairings.**
+
+| | chunks | rounds | boards | agreed |
+|---|---|---|---|---|
+| Two-way, 7 axes | 337 | 414,606,291 | 4,609,130,461 | 414,606,289 rounds, 4,609,130,455 boards |
+| Two-way, big fields | 218 | 117,824 | 37,564,821 | 100% |
+
+0 rounds refused and 0 illegal Ainalrami rounds. On the 4,402,518,536
+boards both engines formed, there was no disagreement about who is White
+(big fields: 100% over 37,505,863 boards). 8,563,924 tournaments ended
+early because bbpPairings found no legal pairing left; they are excluded
+from the rates.
+
+**The 2 differing rounds are both bbpPairings' known second-PAB defect**
+([bbppairings-c2-bug-report.md](bbppairings-c2-bug-report.md),
+`finding-bbp-2026-10-07.md`), and Ainalrami's pairing is the legal one in
+both:
+
+* seed 105051365, round 9, 11 players: bbpPairings gave the bye to player
+  10, who already had a pairing-allocated bye (U) in round 2.
+* seed 310129145, round 7, 12 players: bbpPairings gave the bye to player
+  6, who had a U in round 3.
+
+**Three-way.**
+
+| | chunks | compared rounds | boards | agreement |
+|---|---|---|---|---|
+| Ainalrami, bbpPairings, Gacrux | 433 | 35,567,333 | 380,484,438 formed by all | Ainalrami = bbpPairings on 35,567,333; Ainalrami = Gacrux on 35,567,331; bbpPairings = Gacrux on 35,567,331 |
+| Big fields | 320 | 69,254 | 22,171,700 | 100% on every pair |
+
+Ainalrami was never the odd one out. In the 2 rounds where the engines are
+not unanimous, Gacrux differs from both Ainalrami and bbpPairings, who agree
+with each other; by the harness's definition there is no ground truth in
+those, but two of three engines made the same pairing. Colours: 100%
+agreement on who is White for every pair of engines over all 380,484,438
+boards formed by all three.
+
+**Statistical bound.** 0 odd-one-out in 35,567,333 rounds bounds
+Ainalrami's odd-one-out rate at about 3 / 35,567,333, or 0.0000084%, at 95%
+confidence (rule of three). The previous three-way figure was 649,207
+rounds; this is about 55 times larger.
+
+**Gacrux crashes.** Gacrux crashed on 334,203 of 35,901,561 attempted
+rounds (0.93%). Those rounds are excluded. Only 96 of them cost a
+comparison, because bbpPairings had an answer for them.
+The causes are in Gacrux: `pairingdutch.py:314` (a bare `raise`), `pairing.py:216` (a
+`breakpoint()` call), `pairingdutch.py:465` (`KeyError 'rem_hamilton'`) and
+`crosstabledutch.py:253` (`KeyError 'n'`). The big-field three-way lanes
+reported no Gacrux crashes.
+
+**Totals.** About 450.4 million rounds and 5.05 billion boards were
+compared with bbpPairings in this run, and 35.6 million rounds / 380 million
+boards (plus the 22 million big-field boards) were also compared with
+Gacrux. This sits on top of the six earlier corpora, not in place of them.
 
 ## Re-validation after the 2026-08-18 changes
 

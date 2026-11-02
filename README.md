@@ -18,8 +18,10 @@ computes the
 FIDE tie-breaks (C.07, effective 1 March 2026), individual and team.
 
 **Status: beta.** The engine is functionally complete and reproduces
-bbpPairings 6.0.0 exactly across 2.5 billion compared pairings, in six
-separate corpora that between them vary every input the harness can vary.
+bbpPairings 6.0.0 across more than 5 billion compared pairings (2.5 billion in six
+separate corpora, then 4.6 billion more in the ten-day run of 2026-11-02; every difference
+found was a bbpPairings defect), which between them vary every input
+the harness can vary.
 Article 4's candidate ordering is verified against the regulations
 directly. One point of Article 5 was settled *against this engine* on
 2026-08-27 by the FIDE Systems of Pairings and Programs Commission, and
@@ -111,7 +113,9 @@ older Erlang will refuse it, and building it yourself is then the way.
 | area | compared against | size | result | detail |
 |---|---|---|---|---|
 | Individual pairings (C.04.3) | bbpPairings 6.0.0, on this engine's generated tournaments | 2,536,328,265 pairings, 217,470,056 rounds | 2 disagreements, both a bbpPairings defect | [below](#where-it-stands) |
-| Individual pairings, three engines | bbpPairings and Gacrux | 649,207 rounds | never the odd one out | [validation](docs/validation.md#the-three-way-run-2026-08-27) |
+| Individual pairings, ten-day run | bbpPairings 6.0.0 | 414,606,291 rounds, 4,609,130,461 boards | 2 disagreements, both a bbpPairings defect | [validation](docs/validation.md#the-ten-day-run-2026-10-26-to-2026-11-02) |
+| Individual pairings, three engines | bbpPairings and Gacrux | 35,567,333 rounds (ten-day run); 649,207 before it | never the odd one out | [validation](docs/validation.md#the-ten-day-run-2026-10-26-to-2026-11-02) |
+| Individual pairings, big fields (400-1000 players) | bbpPairings; bbpPairings and Gacrux | 117,824 rounds; 69,254 rounds | 100%, 0 illegal | [validation](docs/validation.md#the-ten-day-run-2026-10-26-to-2026-11-02) |
 | Individual pairings, Gacrux alone | Gacrux, on the timing study's VM | 3,219,728 rounds, 119,064,367 boards | 0 disagreements | [validation](docs/validation.md#against-gacrux-alone-32-million-rounds-2026-09-30) |
 | Individual pairings, the other way | bbpPairings' own generator, checked here | 50,045 tournaments, 28,964,816 pairings | 0 disagreements, colours included | [validation](docs/validation.md#pairings-vcl4thp-q33-both-directions) |
 | Team Swiss (C.04.6), 4-10 teams | brute-force reference written from the regulation | 1,032,949,115 rounds (seeds 1-250,000,000) | 0 failures | [validation](docs/validation.md#team-swiss-pairings-c046) |
@@ -196,17 +200,21 @@ The 2026-08-20 run's own table follows, seventeen axes:
 FIDE's FE1 endorsement allows one difference per 500 tournaments. This is
 one per 3 million - nearly four orders of magnitude inside the bar.
 
-**What 2.5 billion pairings do not buy.** Almost all of them are measured
-against ONE oracle, and agreement with a single reference cannot detect a
-rule both engines read the same wrong way. The check on that is the
+**What billions of two-way pairings do not buy.** Almost all of them are
+measured against ONE oracle, and agreement with a single reference cannot
+detect a rule both engines read the same wrong way. The check on that is the
 three-way harness, where Gacrux gives a genuinely independent third
-opinion - and it has run 649,207 rounds, not 217 million, because it
-is a Python implementation roughly 35x the cost per round. Those 649,207
-bound the two references' mutual disagreement far more tightly than the
-3,352 this sentence used to quote, which is
-the real precision of the ruler every other number here is measured with.
-Raising that bound is worth more now than another billion two-way
-pairings.
+opinion - and it had run only 649,207 rounds, not 217 million, because it
+is a Python implementation roughly 35x the cost per round. Raising that
+bound was worth more than another billion two-way pairings, so the
+ten-day run (2026-10-26 to 2026-11-02) did that: **35,567,333 rounds
+compared by all three engines, Ainalrami never the odd one out**, about 55
+times the earlier figure. By the rule of three that bounds Ainalrami's
+odd-one-out rate at about 0.0000084% (95%). The same run added 414.6
+million two-way rounds (4.6 billion boards) against bbpPairings, with the
+two differing rounds both being bbpPairings' second-PAB defect, and
+400-1000 player fields at 100%. See
+[validation](docs/validation.md#the-ten-day-run-2026-10-26-to-2026-11-02).
 
 The same seventeen axes were re-run on **2026-08-21** with disjoint seeds,
 against the newer matching-layer optimisation (`finalize_pair` as a pure
