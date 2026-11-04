@@ -2,7 +2,8 @@
 
 A profile of `Ainalrami.Burstein` (C.04.4.2) and `Ainalrami.Lim`
 (C.04.4.3) on large fields, and a ranked proposal for making them fast.
-**Nothing here changes the engine.** The two prototypes below are
+**This profile changed nothing in the engine; proposals 1 and 2 were
+implemented afterwards, see "Implemented (2026-11)" at the end.** The two prototypes below are
 scratch scripts outside the repository, written to measure what each
 proposal would buy; the engine code they would replace is unchanged on
 this branch.
@@ -380,3 +381,126 @@ bye and without forbidden pairs in its compatibility graph; the large runs
 use one seed per size. The large Lim runs at 300, 600 and 1000 players
 were repeated with the corrected floater check of proposal 2, with the
 same results.
+
+## Implemented (2026-11): proposals 1 and 2
+
+Proposals 1 and 2 are in the engine; 3 and 4 are not.
+
+* `Ainalrami.MatchingWalk` holds the persistent walk and the switch.
+  `Burstein.Bracket` (`first_in_order`) and `Lim.Group` (the pairs walk and
+  the floater split) each have both paths, chosen by
+  `MatchingWalk.mode/0`: `AINALRAMI_WALK=old|new|check` in the
+  environment (so the command line takes it too), or
+  `config :ainalrami, walk: ...`. `check` runs both on every bracket and
+  group and raises `MatchingWalk.Mismatch` where they part.
+* The walk keeps one solved `WeightedMatching` state on exactly the graph
+  the choices fixed so far leave. A choice the matching already makes is
+  locked with `finalize_pair/3`, or by dropping the other edges and a warm
+  re-solve when that refuses (and for Burstein's floats, which have no
+  single partner to lock). A trial drops the edges it forbids and
+  re-solves warm; a failed one is discarded, the previous state being
+  immutable. Pruning reads `possible_partners/3` on that solved state
+  only, never on a prepared one (the trap this document named).
+* The floater split builds the group plus `m` float vertices, accepts the
+  relaxed optimum when `Graph.perfect_restricted?/3` pairs the players
+  outside plus the floaters with no two floaters meeting, and otherwise
+  calls the full solve unchanged.
+
+**The floater-floater trap cannot fire.** In the relaxed optimum no two
+floaters are compatible with each other: un-floating both and pairing
+them gains `pair_value` and loses two float values, each under
+`(top + 1) * tie`, and `pair_value = (m + 1) * top * tie` is larger for
+every `m >= 2`. So the plain feasibility test the prototype first used
+gives the same verdict as the restricted one. The engine keeps the
+restricted test, which needs no such argument; the corpus's sensitivity
+arm (below) ran the plain test and, as the argument predicts, saw no
+difference.
+
+### The corpus
+
+`tools/burstein_lim_corpus.exs`, on the VM in `/root/w-burstein-lim-speed/`
+(Elixir 1.20.4 / OTP 29, `MIX_ENV=prod`, at most 48 schedulers in all).
+Every round is paired twice in one build, `:old` and `:new`, and the two
+whole answers compared as terms: pairs with colours, the bye, each
+bracket's or group's residents, incoming players, floaters, BSN list and
+pairs, or the refusal and its reason. Tournaments are played forward on
+the agreed answer. Shapes, drawn per seed: uniform, draw-heavy, all-draws
+(a quarter of events; half of those with every absence switched off, so
+the field is one scoregroup every round) and rating-weighted results;
+forbidden pairs none / one / 10-40% of the field; withdrawals and returns,
+a late entrant, half- and zero-point byes, forfeits, odd fields, 3-1-0,
+both initial colours; Baku acceleration for Burstein (Lim refuses
+acceleration, so it has none).
+
+Result, 2026-11-04: **0 differences in 1,995,386 rounds.**
+
+| system | players | tournaments | rounds compared | of which Burstein proper (after seeding) | one scoregroup | differences |
+|---|---|---|---|---|---|---|
+| Burstein | 4-40 | 150,000 | 1,112,516 | 632,398 | 56,807 | 0 |
+| Burstein | 41-120 | 8,000 | 64,048 | 36,569 | 2,944 | 0 |
+| Burstein | 121-300 | 800 | 6,418 | 3,659 | 258 | 0 |
+| Burstein | 302-1000 | 54 | 54 (one per event) | 54 | 8 | 0 |
+| **Burstein** | | **158,854** | **1,183,036** | **672,680** | | **0** |
+| Lim | 4-40 | 100,000 | 741,830 | - | 154,817 | 0 |
+| Lim | 41-120 | 8,000 | 64,048 | - | 12,171 | 0 |
+| Lim | 121-300 | 800 | 6,418 | - | 1,201 | 0 |
+| Lim | 302-1000 | 54 | 54 (one per event) | - | 15 | 0 |
+| **Lim** | | **108,854** | **812,350** | | | **0** |
+
+Refusals were compared too (15,754 rounds, all identical), and byes
+(about half of all rounds). The seeding rounds are paired by the Dutch
+engine and touch neither walk; they are counted but are not evidence.
+Lim's floater relaxation was accepted 2,779,659 times and fell back to the
+full solve 44,258 times (1.6%, nearly all on 4-40 player fields); pruning
+skipped 18 million trials that would each have been a solve (8.2 million
+in Burstein, 9.8 million in Lim).
+
+**Sensitivity** (the proof plan's step 4), same tool, `--sabotage`:
+
+| arm | rounds | differences |
+|---|---|---|
+| Burstein, pruning drops one tight partner (a stale dual, in effect) | 23,624 | 4,087 |
+| Lim, the same | 14,062 | 4,372 |
+| Lim, floater split accepted with no check of the rest | 34,457 | 1,180 |
+| Lim, floater split checked by plain feasibility (the prototype's trap) | 451,925 | 0 |
+
+The first three show the comparison sees a broken new path within a few
+hundred tournaments. The fourth is the argument above made visible: the
+trap is real in principle and unreachable here.
+
+**The references, on the new walk** (step 5), `AINALRAMI_WALK=new`:
+`tools/burstein_validation_run.exs` 230,000 seeds, 580,622 rounds, 0
+disagreements; `tools/lim_validation_run.exs` 230,000 seeds, 1,026,343
+rounds, 0 disagreements (both at the default 4-10 players).
+
+After this the default was flipped to `:new`. `:old` stays selectable
+(`AINALRAMI_WALK=old`) for one release, then goes.
+
+### Timings, old against new
+
+`tools/burstein_lim_timing.exs`: the profile's own histories (Generator
+seed 4242 + n, cut after four rounds, so round 5; `draws` = every game
+drawn, one scoregroup), one call each, one job per case at `+S 1:1`,
+while the corpus run kept about 45 other cores busy. Old and new gave the
+same answer in all twelve cases (SHA-256 of the whole answer, equal).
+
+| system | players | history | old | new | gain |
+|---|---|---|---|---|---|
+| Burstein | 300 | normal (9 groups, largest 79) | 20.5 s | 2.0 s | 10x |
+| Burstein | 300 | all draws (1 group) | 17.8 s | 1.0 s | 17x |
+| Burstein | 600 | normal (9 / 141) | 170 s | 11.7 s | 15x |
+| Burstein | 600 | all draws | 231 s | 6.1 s | 38x |
+| Burstein | 1000 | normal (9 / 251) | 1,445 s (24 min) | 42.8 s | 34x |
+| Burstein | 1000 | all draws | 862 s | 29.9 s | 29x |
+| Lim | 300 | normal | 7.5 s | 0.41 s | 18x |
+| Lim | 300 | all draws | 25.9 s | 1.8 s | 14x |
+| Lim | 600 | normal | 54.3 s | 2.9 s | 19x |
+| Lim | 600 | all draws | 374 s | 8.0 s | 47x |
+| Lim | 1000 | normal | 293 s | 7.9 s | 37x |
+| Lim | 1000 | all draws | 965 s | 34.7 s | 28x |
+
+The old walks are slower here than in the profile above (the box was
+busy, one scheduler each); the new ones land near the prototypes'. What
+is left at 1000 players is Burstein's per-bracket graph over the whole
+remaining field (proposal 3) and, for Lim's single group, the pairs walk's
+remaining warm solves.

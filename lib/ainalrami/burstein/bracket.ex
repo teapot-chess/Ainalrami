@@ -41,6 +41,13 @@ defmodule Ainalrami.Burstein.Bracket do
   which some matching still reaches `W*`, else 0 (float); then BSN 2, and
   so on. A matching found on the way is kept as a witness, so a choice it
   already makes needs no further solve.
+
+  Two walks compute that same answer (`Ainalrami.MatchingWalk` chooses):
+  the old one solves every trial cold on a freshly filtered edge list; the
+  new one keeps one matcher for the whole walk, re-solves a trial warm
+  from the last optimum, and skips without a solve any choice whose edge
+  the optimal dual says is not tight, since no matching reaching `W*` can
+  use it.
   """
 
   alias Ainalrami.Burstein.Player

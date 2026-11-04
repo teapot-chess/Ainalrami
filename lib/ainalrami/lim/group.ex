@@ -43,6 +43,15 @@ defmodule Ainalrami.Lim.Group do
   half in order, then its own half from the far end back (4.2-4.3). The
   pairing is fixed one choice at a time, each kept only if a pairing with
   the fewest denials still completes it.
+
+  ## Two ways to the same answer
+
+  `Ainalrami.MatchingWalk` chooses between the original computations and
+  faster ones that give the same answer (`docs/perf-burstein-lim-2026-11.md`):
+  the split solved on the group plus stand-in "float" vertices, checked
+  against the players outside and falling back to the full matching when
+  the check fails; and the pairs walk on one persistent matcher, pruned by
+  the optimal dual.
   """
 
   alias Ainalrami.Dubov.Graph

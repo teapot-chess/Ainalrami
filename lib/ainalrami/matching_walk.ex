@@ -43,7 +43,7 @@ defmodule Ainalrami.MatchingWalk do
 
   alias Ainalrami.WeightedMatching
 
-  @default :old
+  @default :new
   @key {__MODULE__, :mode}
 
   defmodule Mismatch do
