@@ -43,11 +43,20 @@ defmodule Ainalrami.Lim.Group do
   half in order, then its own half from the far end back (4.2-4.3). The
   pairing is fixed one choice at a time, each kept only if a pairing with
   the fewest denials still completes it.
+
+  ## Two ways to the same answer
+
+  `Ainalrami.MatchingWalk` chooses between the original computations and
+  faster ones that give the same answer (`docs/perf-burstein-lim-2026-11.md`):
+  the split solved on the group plus stand-in "float" vertices, checked
+  against the players outside and falling back to the full matching when
+  the check fails; and the pairs walk on one persistent matcher, pruned by
+  the optimal dual.
   """
 
   alias Ainalrami.Dubov.Graph
   alias Ainalrami.Lim.{Colour, Order}
-  alias Ainalrami.WeightedMatching
+  alias Ainalrami.{MatchingWalk, WeightedMatching}
 
   @doc """
   The floaters of group `members` (`%Lim.Player{}`) whose own score is
@@ -63,36 +72,34 @@ defmodule Ainalrami.Lim.Group do
   end
 
   def floaters(members, score, direction, adjacent, outside, field) do
+    weights = split_weights(members, score, direction, adjacent, field)
+
+    case MatchingWalk.mode() do
+      :old ->
+        floaters_full(members, outside, field, weights)
+
+      :new ->
+        floaters_relaxed(members, outside, field, weights)
+
+      :check ->
+        old = floaters_full(members, outside, field, weights)
+        new = floaters_relaxed(members, outside, field, weights)
+        MatchingWalk.same!("Lim floaters", split_ranks(old), split_ranks(new))
+        old
+    end
+  end
+
+  defp split_ranks({:ok, paired, floating}),
+    do: {:ok, Enum.map(paired, & &1.rank), Enum.map(floating, & &1.rank)}
+
+  defp split_ranks(:error), do: :error
+
+  # The split as one matching over the group and everybody still unpaired.
+  defp floaters_full(members, outside, field, {unit, pair_value, values}) do
     m = length(members)
     vertices = members ++ outside
     n = length(vertices)
     local = List.to_tuple(vertices)
-
-    order = Enum.sort_by(members, & &1.rank, if(direction == :down, do: :asc, else: :desc))
-    pos = order |> Enum.with_index() |> Map.new(fn {p, i} -> {p.rank, i} end)
-    majority = majority(members)
-
-    base = m + 1
-    top = Integer.pow(base, 5)
-    tie = Integer.pow(2, m + 1)
-    pair_value = (m + 1) * top * tie
-    unit = (m + 1) * pair_value
-
-    float_value = fn p ->
-      incoming? = p.score != score
-      reach? = Enum.any?(adjacent, &Graph.allowed?(field, p.rank, &1.rank))
-
-      penalty =
-        bit(incoming? and not reach?) * Integer.pow(base, 4) +
-          bit(incoming? and reach?) * Integer.pow(base, 3) +
-          bit(not incoming? and not reach?) * Integer.pow(base, 2) +
-          bit(p.floated?) * base +
-          bit(majority != nil and p.colour != majority)
-
-      (top - penalty) * tie + Integer.pow(2, pos[p.rank])
-    end
-
-    values = Map.new(members, &{&1.rank, float_value.(&1)})
 
     edges =
       for i <- 0..(n - 2)//1,
@@ -120,6 +127,111 @@ defmodule Ainalrami.Lim.Group do
     end
   end
 
+  # Proposal 2 of `docs/perf-burstein-lim-2026-11.md`: the same split on
+  # the group alone. The players outside enter the full matching only as
+  # "somebody for a floater to meet", and a floater's value never depended
+  # on whom, so they are replaced by `m` float vertices: a member reaching
+  # at least one outside player has an edge to each at its float value, and
+  # the float vertices pair off among themselves at the base unit. Every
+  # split the full matching can reach is reachable here at the same value,
+  # so the optimum `F` here is at least as good; the tie digit makes it
+  # unique. If the players outside plus `F` can be paired with no two of
+  # `F` meeting (two floaters meeting would be a pair of the group, not two
+  # floats), the full matching can reach `F` too, and it is its answer.
+  # Otherwise, or with no perfect matching here, the full solve decides.
+  defp floaters_relaxed(members, outside, field, {unit, pair_value, values} = weights) do
+    m = length(members)
+    local = List.to_tuple(members)
+    outside_ranks = Enum.map(outside, & &1.rank)
+
+    reach? = fn a -> Enum.any?(outside_ranks, &Graph.allowed?(field, a.rank, &1)) end
+
+    pair_edges =
+      for i <- 0..(m - 2)//1,
+          j <- (i + 1)..(m - 1)//1,
+          Graph.allowed?(field, elem(local, i).rank, elem(local, j).rank),
+          do: {i, j, unit + pair_value}
+
+    float_edges =
+      for i <- 0..(m - 1)//1,
+          a = elem(local, i),
+          reach?.(a),
+          k <- m..(2 * m - 1)//1,
+          do: {i, k, unit + values[a.rank]}
+
+    spare_edges = for k <- m..(2 * m - 2)//1, l <- (k + 1)..(2 * m - 1)//1, do: {k, l, unit}
+
+    mate = WeightedMatching.solve(2 * m, pair_edges ++ float_edges ++ spare_edges)
+
+    with true <- map_size(mate) == 2 * m,
+         {paired, floating} = Enum.split_with(0..(m - 1)//1, &(mate[&1] < m)),
+         floating = Enum.map(floating, &elem(local, &1)),
+         ranks = MapSet.new(floating, & &1.rank),
+         true <- rest_pairable?(outside_ranks, ranks, field) do
+      MatchingWalk.count(:floater_relaxed)
+      {:ok, Enum.map(paired, &elem(local, &1)), floating}
+    else
+      _ ->
+        MatchingWalk.count(:floater_fallback)
+        floaters_full(members, outside, field, weights)
+    end
+  end
+
+  # The players outside and the floaters `ranks` can all be paired, no two
+  # floaters together. (The sabotage arms are the corpus run's sensitivity
+  # check: no check at all, and the plain feasibility test the prototype's
+  # review caught.)
+  defp rest_pairable?(outside_ranks, ranks, field) do
+    players = outside_ranks ++ MapSet.to_list(ranks)
+
+    cond do
+      MatchingWalk.sabotage?(:floater_check) ->
+        true
+
+      MatchingWalk.sabotage?(:floater_feasible) ->
+        Graph.feasible?(players, field)
+
+      true ->
+        Graph.perfect_restricted?(
+          players,
+          field,
+          &(not (MapSet.member?(ranks, &1) and MapSet.member?(ranks, &2)))
+        )
+    end
+  end
+
+  # The weights both matchings share: `{unit, pair_value, %{rank => value
+  # of floating}}`.
+  defp split_weights(members, score, direction, adjacent, field) do
+    m = length(members)
+
+    order = Enum.sort_by(members, & &1.rank, if(direction == :down, do: :asc, else: :desc))
+    pos = order |> Enum.with_index() |> Map.new(fn {p, i} -> {p.rank, i} end)
+    majority = majority(members)
+
+    base = m + 1
+    top = Integer.pow(base, 5)
+    tie = Integer.pow(2, m + 1)
+    pair_value = (m + 1) * top * tie
+    unit = (m + 1) * pair_value
+
+    float_value = fn p ->
+      incoming? = p.score != score
+      reach? = Enum.any?(adjacent, &Graph.allowed?(field, p.rank, &1.rank))
+
+      penalty =
+        bit(incoming? and not reach?) * Integer.pow(base, 4) +
+          bit(incoming? and reach?) * Integer.pow(base, 3) +
+          bit(not incoming? and not reach?) * Integer.pow(base, 2) +
+          bit(p.floated?) * base +
+          bit(majority != nil and p.colour != majority)
+
+      (top - penalty) * tie + Integer.pow(2, pos[p.rank])
+    end
+
+    {unit, pair_value, Map.new(members, &{&1.rank, float_value.(&1)})}
+  end
+
   defp bit(true), do: 1
   defp bit(false), do: 0
 
@@ -143,7 +255,25 @@ defmodule Ainalrami.Lim.Group do
   """
   def pairs([], _score, _direction, _field, _colour), do: []
 
-  def pairs(paired, score, direction, field, {median, initial}) do
+  def pairs(paired, score, direction, field, colour) do
+    case MatchingWalk.mode() do
+      :old ->
+        pairs_old(paired, score, direction, field, colour)
+
+      :new ->
+        pairs_new(paired, score, direction, field, colour)
+
+      :check ->
+        old = pairs_old(paired, score, direction, field, colour)
+        new = pairs_new(paired, score, direction, field, colour)
+        MatchingWalk.same!("Lim pairs", ranks(old), ranks(new))
+        old
+    end
+  end
+
+  defp ranks(pairs), do: Enum.map(pairs, fn {a, b} -> {a.rank, b.rank} end)
+
+  defp pairs_old(paired, score, direction, field, {median, initial}) do
     n = length(paired)
     local = List.to_tuple(paired)
     index = paired |> Enum.with_index() |> Map.new(fn {p, i} -> {p.rank, i} end)
@@ -216,6 +346,77 @@ defmodule Ainalrami.Lim.Group do
             walk(order, partner, witness, check, index, local, [
               {picker.rank, partner[picker.rank]} | acc
             ])
+        end
+    end
+  end
+
+  # The same walk on one persistent matcher (`Ainalrami.MatchingWalk`),
+  # solved at every step on exactly the graph the pairs fixed so far leave;
+  # its matching is the witness, and a partner whose edge the optimal dual
+  # says is not tight is skipped unsolved.
+  defp pairs_new(paired, score, direction, field, {median, initial}) do
+    n = length(paired)
+    local = List.to_tuple(paired)
+    index = paired |> Enum.with_index() |> Map.new(fn {p, i} -> {p.rank, i} end)
+    unit = 4 * n
+
+    edges =
+      for i <- 0..(n - 2)//1,
+          j <- (i + 1)..(n - 1)//1,
+          a = elem(local, i),
+          b = elem(local, j),
+          Graph.allowed?(field, a.rank, b.rank),
+          do: {i, j, unit + 2 - Colour.denied(a, b, score, median, initial)}
+
+    {state, best} =
+      case MatchingWalk.start(n, edges) do
+        {state, best, true} -> {state, best}
+        _ -> raise("Lim group: the paired players cannot be paired")
+      end
+
+    by_rank = Map.new(paired, &{&1.rank, &1})
+
+    paired
+    |> Order.new(score, direction)
+    |> walk_new(%{}, state, {n, best, index}, [])
+    |> Enum.map(fn {a, b} -> {by_rank[a], by_rank[b]} end)
+  end
+
+  defp walk_new(order, partner, state, {n, best, index} = ctx, acc) do
+    case Order.next(order, partner) do
+      :done ->
+        Enum.reverse(acc)
+
+      {picker, candidates} ->
+        i = index[picker.rank]
+        tight = MatchingWalk.tight(state, i)
+        witness = MatchingWalk.mate_of(state, i)
+
+        Enum.reduce_while(candidates, nil, fn c, nil ->
+          j = index[c.rank]
+          trial = partner |> Map.put(picker.rank, c.rank) |> Map.put(c.rank, picker.rank)
+
+          cond do
+            witness == j ->
+              {:halt, {trial, MatchingWalk.lock_pair(state, i, j, n, best)}}
+
+            tight != nil and not MapSet.member?(tight, j) ->
+              MatchingWalk.count(:pruned)
+              {:cont, nil}
+
+            true ->
+              case MatchingWalk.settle(MatchingWalk.restrict_pair(state, i, j), n, best) do
+                {:ok, state} -> {:halt, {trial, state}}
+                :no -> {:cont, nil}
+              end
+          end
+        end)
+        |> case do
+          nil ->
+            raise "Lim group: no partner for #{picker.rank} reaches the best pairing"
+
+          {partner, state} ->
+            walk_new(order, partner, state, ctx, [{picker.rank, partner[picker.rank]} | acc])
         end
     end
   end
