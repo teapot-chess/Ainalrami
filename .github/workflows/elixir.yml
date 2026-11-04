@@ -50,8 +50,8 @@ jobs:
         path: |
           deps
           _build
-        key: ${{ runner.os }}-mix-${{ hashFiles('mix.exs') }}
-        restore-keys: ${{ runner.os }}-mix-
+        key: ${{ runner.environment }}-${{ runner.os }}-mix-${{ hashFiles('mix.exs') }}
+        restore-keys: ${{ runner.environment }}-${{ runner.os }}-mix-
 
     # This project has no dependencies at all - deliberately, see mix.exs -
     # so there is no mix.lock and nothing to fetch. The step is kept anyway

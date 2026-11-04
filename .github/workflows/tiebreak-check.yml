@@ -72,8 +72,8 @@ jobs:
         path: |
           deps
           _build
-        key: ${{ runner.os }}-tbcheck-mix-${{ hashFiles('mix.exs') }}
-        restore-keys: ${{ runner.os }}-tbcheck-mix-
+        key: ${{ runner.environment }}-${{ runner.os }}-tbcheck-mix-${{ hashFiles('mix.exs') }}
+        restore-keys: ${{ runner.environment }}-${{ runner.os }}-tbcheck-mix-
 
     - name: Fetch TieBreakServer at the pinned commit
       run: |
