@@ -45,7 +45,7 @@ defmodule Ainalrami.Burstein.Bracket do
 
   alias Ainalrami.Burstein.Player
   alias Ainalrami.Dubov.Graph
-  alias Ainalrami.WeightedMatching
+  alias Ainalrami.{MatchingWalk, WeightedMatching}
 
   @doc """
   Pairs the bracket `bracket` (`%Player{}`, residents and incoming
@@ -113,10 +113,8 @@ defmodule Ainalrami.Burstein.Bracket do
           Graph.allowed?(field, elem(local, i).rank, elem(local, j).rank),
           do: {i, j, unit + value.(i, j)}
 
-    case solve(n, edges) do
-      {weight, mate} when map_size(mate) == n ->
-        mate = first_in_order(nb, n, edges, weight, mate)
-
+    case optimum(n, nb, edges) do
+      {:ok, mate} ->
         pairs =
           for i <- 0..(nb - 1)//1,
               j = mate[i],
@@ -136,6 +134,50 @@ defmodule Ainalrami.Burstein.Bracket do
   # and it is the same colour. A player with no preference (1.5.4) is
   # never denied.
   defp denied?(a, b), do: a.colour != nil and a.colour == b.colour
+
+  # The best value and then the first matching in 4.3's order, by the walk
+  # `MatchingWalk.mode/0` chooses: `{:ok, mate}` or `:error` when the
+  # players cannot all be paired. Both walks return a matching whose
+  # bracket part (pair or float, per BSN) is the answer; `:check` compares
+  # exactly that.
+  defp optimum(n, nb, edges) do
+    case MatchingWalk.mode() do
+      :old ->
+        optimum_old(n, nb, edges)
+
+      :new ->
+        optimum_new(n, nb, edges)
+
+      :check ->
+        old = optimum_old(n, nb, edges)
+        new = optimum_new(n, nb, edges)
+        MatchingWalk.same!("Burstein bracket", answer(old, nb), answer(new, nb))
+        old
+    end
+  end
+
+  defp answer({:ok, mate}, nb),
+    do: {:ok, for(i <- 0..(nb - 1)//1, do: if(mate[i] < nb, do: mate[i], else: :float))}
+
+  defp answer(:error, _nb), do: :error
+
+  defp optimum_old(n, nb, edges) do
+    case solve(n, edges) do
+      {weight, mate} when map_size(mate) == n -> {:ok, first_in_order(nb, n, edges, weight, mate)}
+      _ -> :error
+    end
+  end
+
+  defp optimum_new(n, nb, edges) do
+    case MatchingWalk.start(n, edges) do
+      {state, best, true} ->
+        state = first_in_order_new(nb, n, state, best)
+        {:ok, Map.new(0..(n - 1)//1, &{&1, MatchingWalk.mate_of(state, &1)})}
+
+      _ ->
+        :error
+    end
+  end
 
   defp solve(n, edges) do
     mate = WeightedMatching.solve(n, edges)
@@ -175,6 +217,69 @@ defmodule Ainalrami.Burstein.Bracket do
       end
     end)
     |> elem(1)
+  end
+
+  # The same walk on one persistent matcher (`Ainalrami.MatchingWalk`):
+  # `state` is always solved on exactly the graph `fixed` leaves, and its
+  # matching is the witness. A choice whose edge the optimal dual says is
+  # not tight cannot reach `best` and is skipped unsolved.
+  defp first_in_order_new(nb, n, state, best) do
+    Enum.reduce(0..(nb - 1)//1, {%{}, state}, fn i, {fixed, state} ->
+      if Map.has_key?(fixed, i) do
+        {fixed, state}
+      else
+        choices = Enum.to_list((nb - 1)..(i + 1)//-1) ++ [:float]
+        open = Enum.reject(choices, &Map.has_key?(fixed, &1))
+        tight = MatchingWalk.tight(state, i)
+        witness = state_choice(state, i, nb)
+
+        Enum.reduce_while(open, nil, fn choice, nil ->
+          cond do
+            witness == choice ->
+              {:halt, {fix(fixed, i, choice), lock(state, i, choice, nb, n, best)}}
+
+            not possible?(tight, choice, nb) ->
+              MatchingWalk.count(:pruned)
+              {:cont, nil}
+
+            true ->
+              case MatchingWalk.settle(restrict_one(state, i, choice, nb), n, best) do
+                {:ok, state} -> {:halt, {fix(fixed, i, choice), state}}
+                :no -> {:cont, nil}
+              end
+          end
+        end)
+        |> case do
+          nil -> raise "Burstein bracket: no choice reaches the optimum for BSN #{i + 1}"
+          result -> result
+        end
+      end
+    end)
+    |> elem(1)
+  end
+
+  # Without a readable dual every choice is possible.
+  defp possible?(nil, _choice, _nb), do: true
+  defp possible?(tight, :float, nb), do: Enum.any?(tight, &(&1 >= nb))
+  defp possible?(tight, j, _nb), do: MapSet.member?(tight, j)
+
+  defp lock(state, i, :float, nb, n, best) do
+    if Enum.any?(WeightedMatching.neighbours(state, i), fn {x, _} -> x < nb end),
+      do: state |> restrict_one(i, :float, nb) |> MatchingWalk.settle!(n, best),
+      else: state
+  end
+
+  defp lock(state, i, j, _nb, n, best), do: MatchingWalk.lock_pair(state, i, j, n, best)
+
+  # `restrict/3` for one more choice, on the matcher: a fixed pair keeps
+  # its own edge and no other at either end, a fixed floater only its
+  # edges out of the bracket.
+  defp restrict_one(state, i, :float, nb), do: MatchingWalk.drop(state, i, &(&1 >= nb))
+  defp restrict_one(state, i, j, _nb), do: MatchingWalk.restrict_pair(state, i, j)
+
+  defp state_choice(state, i, nb) do
+    j = MatchingWalk.mate_of(state, i)
+    if j < nb, do: j, else: :float
   end
 
   defp witness_choice(mate, i, nb) do
