@@ -45,7 +45,7 @@ jobs:
     name: Tie-breaks vs TieBreakServer and the reference
     # Pinned rather than `ubuntu-latest` - see elixir.yml's runs-on comment:
     # that label is due to move to a still-preview Ubuntu 26.04 in Nov 2026.
-    runs-on: ubuntu-24.04
+    runs-on: [self-hosted, Linux, X64, teapot-vm]
     timeout-minutes: 40
 
     steps:
