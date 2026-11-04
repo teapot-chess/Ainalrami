@@ -56,7 +56,7 @@ jobs:
   escript:
     name: Build and attach the escript
     if: github.event_name != 'pull_request'
-    runs-on: ubuntu-24.04
+    runs-on: [self-hosted, Linux, X64, teapot-vm]
     permissions:
       contents: write
 
@@ -88,7 +88,8 @@ jobs:
 
   package:
     name: Package, smoke-test and attach (${{ matrix.target }})
-    runs-on: ${{ matrix.runner }}
+    # teapot-vm = the self-hosted Linux x64 runners; the others are GitHub-hosted.
+    runs-on: ${{ matrix.runner == 'teapot-vm' && fromJSON('["self-hosted","Linux","X64","teapot-vm"]') || matrix.runner }}
     permissions:
       contents: write
     strategy:
@@ -96,7 +97,7 @@ jobs:
       matrix:
         include:
           - { target: windows-x86_64, runner: windows-2025, archive: ainalrami-windows-x86_64.zip }
-          - { target: linux-x86_64, runner: ubuntu-24.04, archive: ainalrami-linux-x86_64.tar.gz }
+          - { target: linux-x86_64, runner: teapot-vm, archive: ainalrami-linux-x86_64.tar.gz }
           - { target: macos-arm64, runner: macos-15, archive: ainalrami-macos-arm64.zip }
     defaults:
       run:
@@ -217,7 +218,7 @@ jobs:
     name: Write SHA256SUMS
     if: github.event_name != 'pull_request'
     needs: [escript, package]
-    runs-on: ubuntu-24.04
+    runs-on: [self-hosted, Linux, X64, teapot-vm]
     permissions:
       contents: write
 
