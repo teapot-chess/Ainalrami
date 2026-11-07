@@ -1,5 +1,9 @@
 Ainalrami
-Copyright (c) 2026 teapot-chess. All rights reserved; see LICENSE.
+Copyright 2026 Jorian Burssens.
+
+Ainalrami is licensed under the Functional Source License, Version 1.1, Apache 2.0
+Future License (FSL-1.1-ALv2); see LICENSE. Each version becomes available
+under the Apache License, Version 2.0 two years after its release.
 
 The parts derived from BBP Pairings (below) stay subject to the notice and
 attribution terms of the Apache License, Version 2.0 under which BBP Pairings

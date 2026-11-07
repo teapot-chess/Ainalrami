@@ -1253,10 +1253,13 @@ cross-checking pairing correctness against any other engine.
 
 ## Licence
 
-Copyright (c) 2026 teapot-chess. All rights reserved. No licence is granted to
-use, copy, modify or distribute this software. See [LICENSE](LICENSE).
+Copyright 2026 Jorian Burssens. Ainalrami is source available under the
+[Functional Source License, Version 1.1, Apache 2.0 Future License](LICENSE)
+(FSL-1.1-ALv2). You may use, copy, modify and share it for any purpose except
+offering a competing product or service. Each release turns into Apache-2.0
+two years after it was published.
 
-One exception, and it is not ours to waive: parts of this engine are derived
+One part is not ours to relicense: parts of this engine are derived
 from [bbpPairings](https://github.com/BieremaBoyzProgramming/bbpPairings),
 which is Apache License 2.0. `Ainalrami.Pairing`'s bracket cascade is a
 stage-for-stage port of `dutch.cpp`, and `Ainalrami.WeightedMatching`'s control
@@ -1264,8 +1267,7 @@ flow was read directly from bbpPairings' matching sources. No bbpPairings code
 is reproduced here - it is C++ and this is Elixir - but the algorithm and
 structure are theirs, so the attribution and the Apache text stay with the
 project ([NOTICE](NOTICE), [THIRD_PARTY](THIRD_PARTY)), and [NOTICE](NOTICE)
-spells out exactly which files are derived and what changed. Releases published
-before 2026-11-01 keep the Apache 2.0 licence they were published under.
+spells out exactly which files are derived and what changed.
 
 The vendored bbpPairings binaries and JaVaFo are covered separately; see
 [NOTICE](NOTICE).

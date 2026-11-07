@@ -29,22 +29,23 @@
 name: Release
 
 on:
-  push:
-    tags:
-      - "v*"
+  # Off until December 2026 - restore these triggers to re-enable:
+  # push:
+  #   tags:
+  #     - "v*"
+  # pull_request:
+  #   branches: [ "main" ]
+  #   paths:
+  #     - "rel/**"
+  #     - "mix.exs"
+  #     - "mix.lock"
+  #     - ".github/workflows/release.yml"
   workflow_dispatch:
     inputs:
       tag:
         description: "Existing release tag to build and attach to, e.g. v0.44.0"
         required: true
         type: string
-  pull_request:
-    branches: [ "main" ]
-    paths:
-      - "rel/**"
-      - "mix.exs"
-      - "mix.lock"
-      - ".github/workflows/release.yml"
 
 permissions:
   contents: read
@@ -56,7 +57,7 @@ jobs:
   escript:
     name: Build and attach the escript
     if: github.event_name != 'pull_request'
-    runs-on: [self-hosted, Linux, X64, teapot-vm]
+    runs-on: ubuntu-24.04
     permissions:
       contents: write
 
@@ -88,8 +89,7 @@ jobs:
 
   package:
     name: Package, smoke-test and attach (${{ matrix.target }})
-    # teapot-vm = the self-hosted Linux x64 runners; the others are GitHub-hosted.
-    runs-on: ${{ matrix.runner == 'teapot-vm' && fromJSON('["self-hosted","Linux","X64","teapot-vm"]') || matrix.runner }}
+    runs-on: ${{ matrix.runner }}
     permissions:
       contents: write
     strategy:
@@ -97,7 +97,7 @@ jobs:
       matrix:
         include:
           - { target: windows-x86_64, runner: windows-2025, archive: ainalrami-windows-x86_64.zip }
-          - { target: linux-x86_64, runner: teapot-vm, archive: ainalrami-linux-x86_64.tar.gz }
+          - { target: linux-x86_64, runner: ubuntu-24.04, archive: ainalrami-linux-x86_64.tar.gz }
           - { target: macos-arm64, runner: macos-15, archive: ainalrami-macos-arm64.zip }
     defaults:
       run:
@@ -218,7 +218,7 @@ jobs:
     name: Write SHA256SUMS
     if: github.event_name != 'pull_request'
     needs: [escript, package]
-    runs-on: [self-hosted, Linux, X64, teapot-vm]
+    runs-on: ubuntu-24.04
     permissions:
       contents: write
 
