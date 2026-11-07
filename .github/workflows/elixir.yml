@@ -24,7 +24,7 @@ jobs:
     # Pinned rather than `ubuntu-latest`: GitHub has announced that label
     # moving to Ubuntu 26.04 in November 2026, and 26.04 is still a public
     # preview today (2026-09-27), not something to land on by surprise.
-    runs-on: ubuntu-24.04
+    runs-on: [self-hosted, Linux, X64, teapot-vm]
 
     steps:
     # Actions are pinned to a commit, not to a tag. A tag is mutable, and
