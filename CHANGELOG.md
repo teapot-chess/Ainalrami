@@ -66,6 +66,10 @@ with the reference on every one of them.
 
 ## [Unreleased]
 
+## [0.51.1] - 2026-11-07
+
+- [Fix] **A team that won by forfeit stops being paid like one that was merely left over.** TRF-2026 record 330, Note 1, tells the writer to credit the winning team's present players with `0000 - +`. This reader took `0000 +` at its word, called it a pairing-allocated bye, and only consulted the 330 record when the round looked like a zero-point bye, which a bye, by definition, is not. So a team Swiss handed the forfeit winner the bye's match and game points instead of the win it had on file, two lines further down, in writing. A 330 record naming the team now outranks whatever its players' codes suggest: the team and its players count as a forfeit win against the absent team, and the absent team as the loser. The older `0000 - F` spelling still reads the same way, and so does a losing side whose one present seat is written `0000 - -`. Without a 330 record, `0000 +` is still a bye, because sometimes it is. The tiebreak reference had the same blind spot and was taught the same lesson; both now agree on all three spellings.
+
 - [Change] **Reference source: read it, do not run it.** The Functional Source License lasted an afternoon, which was long enough for someone else to start using it. Ainalrami is now published under the Microsoft Reference Source License (Ms-RSL): the code may be read, for reference, and that is the whole grant - no running, copying, modifying or distributing. Versions published before today keep the licence they were published under; licences, unlike opinions, cannot be taken back. The parts derived from bbpPairings keep their Apache attribution, as they always had to. CI stays on GitHub-hosted runners, and the release workflow waits until December.
 
 ## [0.51.0] - 2026-11-05

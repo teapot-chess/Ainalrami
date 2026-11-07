@@ -129,7 +129,9 @@ defmodule Ainalrami.Tiebreaks.Team do
   - is a forfeited match: won by the side with more game points, lost by
   the other, and a double forfeit when neither scored. A TRF26 `330`
   record forfeits a match neither team has board records for (see
-  `declared_forfeit/5`); a match with board records is read from them.
+  `declared_forfeit/5`), and outranks the bye the winners' `0000 +` (330
+  Note 1) or `0000 F` would otherwise read as; a match with board records
+  is read from them.
 
   Match points are the file's TRF26 `362` record (`W`/`D`/`L`; `A` for a
   match lost by forfeit) when it has one, 2/1/0 otherwise; `:match_points`
@@ -348,8 +350,13 @@ defmodule Ainalrami.Tiebreaks.Team do
   # 12 then reads it as a win on every board, reference question Q3); the
   # loser, or both sides of a double forfeit, the forfeit's match points
   # and nothing. A match with board records is read from its boards.
+  #
+  # TRF-2026 330, Note 1, credits the winner's present players with
+  # `0000 - +`, which on its own reads as a pairing-allocated bye; the
+  # older `0000 - F` reads as a zero-point bye here. A `330` record naming
+  # the team outranks either: the round is the forfeited match, not a bye.
   defp declared_forfeit(%Match{kind: kind} = m, team, r, forfeited, points)
-       when kind in [:zero_bye] do
+       when kind in [:zero_bye, :pab] do
     found =
       Enum.find_value(forfeited, fn
         {{^r, ^team, other}, winner} -> {other, winner == :white}
