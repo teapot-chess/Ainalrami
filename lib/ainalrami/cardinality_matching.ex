@@ -152,6 +152,73 @@ defmodule Ainalrami.CardinalityMatching do
     end
   end
 
+  @doc """
+  `exposable/1` on the graph of order `n` whose edges are given by
+  `edge?.(u, v)` (symmetric, `u != v`), never built whole.
+
+  The same answer as `exposable/1` on the adjacency tuple of that graph
+  with every row in ascending order, and by the same steps: the greedy
+  start and every search see the same rows in the same order (each row is
+  computed when the search scans it), so the matching is the same one. Two
+  things are cheaper. The greedy start looks for a partner only above the
+  vertex - an unmatched vertex below it found no free neighbour when it was
+  visited, the vertex included, so it is not a neighbour - instead of
+  walking the matched prefix of every row. And the last search stops as
+  soon as every vertex is outer, since outer vertices never stop being
+  outer: on a score group of 4,800 where every player can be the one left
+  over, it scans a handful of rows rather than every edge of the group.
+
+  While a proof is being recorded the graph is built whole and handed to
+  `exposable/1`, whose witness writes the rows down.
+  """
+  def exposable_lazy(n, edge?) do
+    if Ainalrami.Proof.recording?() do
+      exposable(List.to_tuple(for v <- 0..(n - 1)//1, do: row(n, edge?, v)))
+    else
+      rows = &row(n, edge?, &1)
+      match = do_maximum_lazy(n, edge?, rows)
+
+      case Enum.reject(0..(n - 1)//1, &is_map_key(match, &1)) do
+        [u] ->
+          {:none, outer, _p} = search(rows, match, u, MapSet.new(), n)
+          {:ok, outer}
+
+        _ ->
+          :no
+      end
+    end
+  end
+
+  defp row(n, edge?, v), do: for(u <- 0..(n - 1)//1, u != v, edge?.(v, u), do: u)
+
+  defp do_maximum_lazy(n, edge?, rows) do
+    match =
+      Enum.reduce(0..(n - 1)//1, %{}, fn v, match ->
+        if is_map_key(match, v) do
+          match
+        else
+          case Enum.find((v + 1)..(n - 1)//1, &(not is_map_key(match, &1) and edge?.(v, &1))) do
+            nil -> match
+            u -> match |> Map.put(v, u) |> Map.put(u, v)
+          end
+        end
+      end)
+
+    # As `do_maximum/1`, less the searches that cannot find a path: an
+    # augmenting path joins two exposed vertices, so with one left there is
+    # nothing to search for (and nothing a search could change).
+    Enum.reduce(0..(n - 1)//1, match, fn v, match ->
+      if is_map_key(match, v) or n - map_size(match) < 2 do
+        match
+      else
+        case search(rows, match, v, MapSet.new()) do
+          {:path, to, p} -> augment(to, p, match)
+          {:none, _outer, _p} -> match
+        end
+      end
+    end)
+  end
+
   # A maximum matching's witness: the matching and the Gallai-Edmonds
   # barrier - the neighbours, outside it, of the set some maximum matching
   # leaves exposed (everything an alternating search from an exposed vertex
@@ -213,7 +280,10 @@ defmodule Ainalrami.CardinalityMatching do
   # `{:path, exposed vertex, parents}` when an augmenting path exists, else
   # `{:none, outer vertices, parents}`. `base` holds only the vertices a blossom has
   # relabelled (`base_of/2`).
-  defp search(adj, match, root, dead) do
+  # `whole`, when given, is the order of the graph: the search, which must
+  # then be one that finds no augmenting path, stops once every vertex is
+  # outer (`exposable_lazy/2`).
+  defp search(adj, match, root, dead, whole \\ nil) do
     st = %{
       group: %{},
       gbase: %{},
@@ -222,7 +292,8 @@ defmodule Ainalrami.CardinalityMatching do
       used: MapSet.new([root]),
       match: match,
       root: root,
-      dead: dead
+      dead: dead,
+      whole: whole
     }
 
     bfs(:queue.from_list([root]), adj, st)
@@ -242,8 +313,13 @@ defmodule Ainalrami.CardinalityMatching do
 
       {{:value, v}, queue} ->
         case scan(neighbours(adj, v), v, queue, st) do
-          {:path, _to, _p} = found -> found
-          {:cont, queue, st} -> bfs(queue, adj, st)
+          {:path, _to, _p} = found ->
+            found
+
+          {:cont, queue, st} ->
+            if st.whole != nil and MapSet.size(st.used) == st.whole,
+              do: {:none, st.used, st.p},
+              else: bfs(queue, adj, st)
         end
     end
   end
