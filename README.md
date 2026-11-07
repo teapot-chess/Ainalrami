@@ -1,5 +1,10 @@
 # Ainalrami
 
+> **Licence: reference source only.** Copyright 2026 Jorian Burssens. This code
+> is published under the [Microsoft Reference Source License (Ms-RSL)](LICENSE):
+> you may read it. You may not run, copy, modify or distribute it. See
+> [Licence](#licence).
+
 A FIDE Swiss pairing engine - the Dutch system, and now Dubov, Burstein and Lim - written in
 Elixir. No JVM, no external binary, no runtime dependencies.
 
