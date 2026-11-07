@@ -1245,7 +1245,7 @@ harness at them and how to run the large fuzz axes.
 ## Relationship to OpenPairings
 
 Ainalrami is the sibling project to
-[OpenPairings](https://github.com/teapot-chess/openpairings), an
+[OpenPairings](https://pairings.cloud), an
 Elixir/Phoenix tournament manager, where it is the **default Swiss pairing
 engine**, running in-process with nothing to install beside the app.
 JaVaFo remains available there as an optional alternative, for organisers
