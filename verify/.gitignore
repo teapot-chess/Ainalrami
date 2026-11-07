@@ -1,0 +1,6 @@
+/_build/
+/deps/
+/ainalrami-verify
+/runs/
+erl_crash.dump
+/tmp/
