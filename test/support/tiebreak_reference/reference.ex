@@ -348,6 +348,9 @@ defmodule Ainalrami.TiebreakReference do
       for {id, _} <- rosters, r <- 1..n//1, into: %{} do
         rds = seen.(id, r)
         met = Enum.filter(rds, & &1.opp)
+        # A 330 record outranks a bye the players' own codes suggest
+        # (`0000 - +` is how 330 Note 1 credits the winner's players).
+        declared = declared_forfeit(t, id, r)
 
         match =
           cond do
@@ -369,6 +372,9 @@ defmodule Ainalrami.TiebreakReference do
                 boards: board_map
               }
 
+            declared != nil ->
+              declared
+
             Enum.any?(rds, &(&1.t == :pab)) ->
               %{
                 kind: :pab,
@@ -379,8 +385,7 @@ defmodule Ainalrami.TiebreakReference do
               }
 
             true ->
-              declared_forfeit(t, id, r) ||
-                %{kind: :zero_bye, opponent: nil, mp: 0.0, gp: 0.0, boards: %{}}
+              %{kind: :zero_bye, opponent: nil, mp: 0.0, gp: 0.0, boards: %{}}
           end
 
         {{id, r}, match}

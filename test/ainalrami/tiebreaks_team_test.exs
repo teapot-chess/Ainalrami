@@ -406,20 +406,27 @@ defmodule Ainalrami.TiebreaksTeamTest do
       g = fn opp, colour, result -> %{opponent_rank: opp, colour: colour, result: result} end
       none = %{opponent_rank: nil, colour: "-", result: ""}
 
+      # Round 2 modes besides :double and :absent: team Two's players
+      # credited for a forfeited match with no opponent (`{:credited, "+"}`
+      # is TRF-2026 330 Note 1, `"F"` the older spelling), and :lone - Two
+      # credited `+`, Four with one seat present and written `0000 - -`.
       r2 = fn
-        :double, opp, colour -> g.(opp, colour, "-")
-        :absent, _opp, _colour -> none
+        :double, _rank, opp, colour -> g.(opp, colour, "-")
+        {:credited, code}, rank, _opp, _colour when rank in [3, 4] -> g.(nil, "-", writable(code))
+        :lone, rank, _opp, _colour when rank in [3, 4] -> g.(nil, "-", writable("+"))
+        :lone, 7, _opp, _colour -> g.(nil, "-", writable("-"))
+        _, _rank, _opp, _colour -> none
       end
 
       players = [
         {1, [g.(3, "w", "1"), g.(5, "w", "1")]},
         {2, [g.(4, "b", "="), g.(6, "b", "0")]},
-        {3, [g.(1, "b", "0"), r2.(round2, 7, "w")]},
-        {4, [g.(2, "w", "="), r2.(round2, 8, "b")]},
+        {3, [g.(1, "b", "0"), r2.(round2, 3, 7, "w")]},
+        {4, [g.(2, "w", "="), r2.(round2, 4, 8, "b")]},
         {5, [g.(7, "w", "+"), g.(1, "b", "0")]},
         {6, [g.(8, "b", "+"), g.(2, "w", "1")]},
-        {7, [g.(5, "b", "-"), r2.(round2, 3, "b")]},
-        {8, [g.(6, "w", "-"), r2.(round2, 4, "w")]}
+        {7, [g.(5, "b", "-"), r2.(round2, 7, 3, "b")]},
+        {8, [g.(6, "w", "-"), r2.(round2, 8, 4, "w")]}
       ]
 
       text =
@@ -435,10 +442,18 @@ defmodule Ainalrami.TiebreaksTeamTest do
             %{name: "Three", player_ranks: [5, 6]},
             %{name: "Four", player_ranks: [7, 8]}
           ]
-        }) <> extra
+        })
+        # The writer refuses `+`/`-` against 0000; the reader takes them.
+        |> String.replace("0000 - U", "0000 - +")
+        |> String.replace("0000 - Z", "0000 - -")
+        |> Kernel.<>(extra)
 
       Ainalrami.Trf.parse(text)
     end
+
+    defp writable("+"), do: "U"
+    defp writable("-"), do: "Z"
+    defp writable(code), do: code
 
     test "Trf.parse reads the 362 match points and the 330 forfeited matches" do
       trf = forfeit_trf("362  W 3.0    D 1.0    L 0.0    P 3.0    A 0.0\r\n330 -- 2   2   4\r\n")
@@ -495,12 +510,37 @@ defmodule Ainalrami.TiebreaksTeamTest do
       assert plain.teams[2].rounds[2].kind == :zero_bye
     end
 
+    test "a 330 record outranks the winners' 0000 + (330 Note 1) and the older 0000 F" do
+      for round2 <- [{:credited, "+"}, {:credited, "F"}, :lone] do
+        trf = forfeit_trf("330 +- 2   2   4\r\n", round2)
+        line = trf.players |> Enum.find(&(&1.rank == 3)) |> Map.get(:games) |> Enum.at(1)
+        assert line.opponent_rank == nil
+        assert line.result == if(round2 == {:credited, "F"}, do: "F", else: "+")
+
+        event = Team.from_trf(trf)
+        two = event.teams[2].rounds[2]
+        four = event.teams[4].rounds[2]
+
+        assert {two.kind, two.opponent, two.mp, two.gp} == {:forfeit_win, 4, 2.0, 2.0},
+               inspect(round2)
+
+        assert {four.kind, four.opponent, four.mp, four.gp} == {:forfeit_loss, 2, 0.0, 0.0},
+               inspect(round2)
+      end
+
+      # Without the record, `0000 +` is what it says: a pairing-allocated bye.
+      assert Team.from_trf(forfeit_trf("", {:credited, "+"})).teams[2].rounds[2].kind == :pab
+    end
+
     test "the reference reads the same files the same way" do
       for {extra, round2} <- [
             {"", :double},
             {"362  W 3.0    D 1.0    L 0.0\r\n", :double},
             {"330 -+ 2   2   4\r\n", :absent},
-            {"330 -- 2   2   4\r\n", :absent}
+            {"330 -- 2   2   4\r\n", :absent},
+            {"330 +- 2   2   4\r\n", {:credited, "+"}},
+            {"330 +- 2   2   4\r\n", {:credited, "F"}},
+            {"330 +- 2   2   4\r\n", :lone}
           ] do
         trf = forfeit_trf(extra, round2)
 
