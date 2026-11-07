@@ -30,3 +30,14 @@ commands for larger runs on the VM are in
 Run it:
 
     cd verify && mix deps.get && mix test
+
+## Changing the rules instead of checking them
+
+[`lab/`](../lab/README.md) is a third project, beside `verify/` and
+depending on it: a rule-change simulator. It splits C.04.3's quality
+criteria into named pieces that can be dropped, reordered or re-read,
+replays tournaments under the 2026 text and a variant, and reports the
+difference with confidence intervals. Its baseline is `verify/`'s
+brute-force reference, held to it by test. It answers questions about
+the rules, not about the engine; the evidence draft written with it is
+[`fide-rules-evidence-draft.md`](fide-rules-evidence-draft.md).
