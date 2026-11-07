@@ -198,6 +198,9 @@ defmodule Ainalrami.Pairing do
   @direct_budget_key :ainalrami_direct_budget
   # The pruned walk's failed states (see "The pruned walk").
   @direct_memo_key :ainalrami_direct_memo
+  # Scores a round and two rounds back, by rank, while one round's float
+  # history is worked out (`with_float_history/2`).
+  @score_memo_key :ainalrami_score_memo
   # Rows of a dense compatible graph built as an augmenting search reaches
   # them (`memo_row/3`): the bye bootstrap's, and the completability
   # oracle's for the round (see `oracle_dense/2`).
@@ -2596,9 +2599,22 @@ defmodule Ainalrami.Pairing do
   # round rather than per candidate pair - `float_direction/4` needs every
   # player (it compares against the OPPONENT's score at the time), which
   # `pair_weight/4` doesn't have and shouldn't need.
+  #
+  # Each player's score a round and two rounds back is asked for by the
+  # player and by every opponent of those rounds, and each asking summed
+  # the player's whole history again (`reconciled_points/2`): four to six
+  # sums of every game per player, a sixth of a 10,000-player round. They
+  # are kept for the length of this call (`@score_memo_key`), by rank,
+  # which validation has made unique.
   defp with_float_history(players, played) do
     by_rank = Map.new(players, &{&1.rank, &1})
-    Enum.map(players, &with_floats(&1, by_rank, played))
+    Process.put(@score_memo_key, %{})
+
+    try do
+      Enum.map(players, &with_floats(&1, by_rank, played))
+    after
+      Process.delete(@score_memo_key)
+    end
   end
 
   defp with_floats(player, by_rank, played) do
@@ -2654,8 +2670,10 @@ defmodule Ainalrami.Pairing do
           :none
 
         true ->
-          mine = score_before(player, rounds_back, played)
-          theirs = score_before(Map.fetch!(by_rank, game.opponent_rank), rounds_back, played)
+          mine = memo_score_before(player, rounds_back, played)
+
+          theirs =
+            memo_score_before(Map.fetch!(by_rank, game.opponent_rank), rounds_back, played)
 
           cond do
             mine > theirs -> :down
@@ -2683,7 +2701,43 @@ defmodule Ainalrami.Pairing do
   # points included - which is precisely why JaVaFo's manual insists the
   # `XXA` line carry the full round-by-round record rather than just the
   # current round's value.
-  defp score_before(player, rounds_back, played) do
+  defp memo_score_before(player, rounds_back, played) do
+    case Process.get(@score_memo_key) do
+      nil ->
+        score_before(player, rounds_back, played)
+
+      memo ->
+        key = {player.rank, rounds_back}
+
+        case memo do
+          %{^key => score} ->
+            score
+
+          _ ->
+            # The base both scores wind back from, summed once per player.
+            base_key = {player.rank, :base}
+
+            {base, memo} =
+              case memo do
+                %{^base_key => base} ->
+                  {base, memo}
+
+                _ ->
+                  b = reconciled_points(player, played)
+                  {b, Map.put(memo, base_key, b)}
+              end
+
+            score = score_before(player, rounds_back, played, base)
+            Process.put(@score_memo_key, Map.put(memo, key, score))
+            score
+        end
+    end
+  end
+
+  defp score_before(player, rounds_back, played),
+    do: score_before(player, rounds_back, played, reconciled_points(player, played))
+
+  defp score_before(player, rounds_back, played, base) do
     from = max(played - rounds_back, 0)
 
     # A SLICE of the played rounds, not everything from `from` onwards.
@@ -2700,7 +2754,7 @@ defmodule Ainalrami.Pairing do
     # which is what caught it.
     player.games
     |> Enum.slice(from, played - from)
-    |> Enum.reduce(reconciled_points(player, played), fn game, score ->
+    |> Enum.reduce(base, fn game, score ->
       score - game_points(game)
     end)
     |> Kernel.+(acceleration_at(player, played - rounds_back))
@@ -4377,22 +4431,14 @@ defmodule Ainalrami.Pairing do
     compatible? = fn a, b -> legal_pair?(a, b) and colour_compatible?(a, b) end
     order = if rem(q, 2) == 1, do: q, else: q + 1
 
-    pairs =
-      for a <- 0..(q - 1)//1,
-          b <- (a + 1)..(q - 1)//1,
-          compatible?.(elem(group, a), elem(group, b)),
-          do: {a, b}
+    # The stand-in `q` (an even group only) joined to the takers. The graph
+    # is asked edge by edge, never built: see `group_edge/4`.
+    stand_in =
+      if rem(q, 2) == 1, do: MapSet.new(), else: MapSet.new(takers, &(&1 - nsgb))
 
-    stand_in = if rem(q, 2) == 1, do: [], else: for(h <- takers, do: {h - nsgb, q})
+    edge? = group_edge(group, q, &MapSet.member?(stand_in, &1), compatible?)
 
-    adj =
-      Enum.reduce(pairs ++ stand_in, Map.new(0..(order - 1)//1, &{&1, []}), fn {a, b}, acc ->
-        acc |> Map.update!(a, &[b | &1]) |> Map.update!(b, &[a | &1])
-      end)
-
-    adj = List.to_tuple(for v <- 0..(order - 1)//1, do: Enum.reverse(Map.fetch!(adj, v)))
-
-    case CardinalityMatching.exposable(adj) do
+    case CardinalityMatching.exposable_lazy(order, edge?) do
       {:ok, exposable} ->
         Enum.filter(sgb..(nsgb - 1)//1, fn f ->
           Enum.any?(0..(q - 1)//1, fn g ->
@@ -4469,6 +4515,23 @@ defmodule Ainalrami.Pairing do
   # leave exposed (`Ainalrami.CardinalityMatching.exposable/1`) - one search
   # for every resident at once, where asking per resident is a matching
   # per resident.
+  # The edge test of a score group of `q` players plus a stand-in vertex
+  # `q` joined to the players `stand_in?` names: the graph
+  # `absorbed_pool/5` and `bye_group_pool/4` used to build whole, a pair at a
+  # time (`compatible?` asked with the better-placed player first, as the
+  # pair list asked it), and that `CardinalityMatching.exposable_lazy/2`
+  # now asks only for the rows its search reaches. Building it whole was
+  # quadratic in the group: 11.5 million pairs for the 4,800 players on
+  # zero in round 2 of a 10,000-player open.
+  defp group_edge(group, q, stand_in?, compatible?) do
+    fn
+      ^q, v -> stand_in?.(v)
+      u, ^q -> stand_in?.(u)
+      u, v when u < v -> compatible?.(elem(group, u), elem(group, v))
+      u, v -> compatible?.(elem(group, v), elem(group, u))
+    end
+  end
+
   defp bye_group_pool(arr, sgb, nsgb, ctx) do
     m = tuple_size(arr)
     q = m - nsgb
@@ -4478,26 +4541,14 @@ defmodule Ainalrami.Pairing do
     # plus the floater.
     if rem(q, 2) == 0 do
       group = List.to_tuple(for i <- nsgb..(m - 1)//1, do: elem(arr, i))
-      x = q
 
-      pairs =
-        for a <- 0..(q - 1)//1,
-            b <- (a + 1)..(q - 1)//1,
-            compatible?.(elem(group, a), elem(group, b)),
-            do: {a, b}
+      # The stand-in `q` joined to the group's bye candidates.
+      candidate =
+        List.to_tuple(for a <- 0..(q - 1)//1, do: bye_candidate?(elem(group, a), ctx.bye_score))
 
-      stand_in =
-        for a <- 0..(q - 1)//1, bye_candidate?(elem(group, a), ctx.bye_score), do: {a, x}
+      edge? = group_edge(group, q, &elem(candidate, &1), compatible?)
 
-      adj =
-        Enum.reduce(pairs ++ stand_in, Map.new(0..q//1, &{&1, []}), fn {a, b}, acc ->
-          acc |> Map.update!(a, &[b | &1]) |> Map.update!(b, &[a | &1])
-        end)
-        |> then(fn adj ->
-          List.to_tuple(for v <- 0..q//1, do: Enum.reverse(Map.fetch!(adj, v)))
-        end)
-
-      with {:ok, exposable} <- CardinalityMatching.exposable(adj) do
+      with {:ok, exposable} <- CardinalityMatching.exposable_lazy(q + 1, edge?) do
         pool =
           Enum.filter(sgb..(nsgb - 1)//1, fn f ->
             Enum.any?(0..(q - 1)//1, fn g ->
@@ -5086,23 +5137,45 @@ defmodule Ainalrami.Pairing do
   # `{fewest colour clashes, fewest C13 breaches among those}` over every
   # perfect matching of an even set of members with these types - see the
   # section comment.
+  #
+  # Asked once per choice the walk makes, and on an odd bracket once per
+  # floater type as well, so the seven totals it reads are summed in one
+  # pass over the handful of types instead of being tallied into a map.
   defp colour_lb(counts, absolute_pairs?) do
-    tally =
-      Enum.reduce(counts, %{}, fn {{pref, strength}, n}, acc ->
-        acc |> count_add(pref, n) |> count_add({pref, strength}, n)
-      end)
+    {w, b, z, mild_w, mild_b, abs_w, abs_b} =
+      :maps.fold(&colour_tally/3, {0, 0, 0, 0, 0, 0, 0}, counts)
 
-    at = &Map.get(tally, &1, 0)
-    {w, b, z} = {at.("w"), at.("b"), at.(nil)}
-
-    pairable = fn pref -> if absolute_pairs?, do: at.({pref, :absolute}), else: 0 end
+    {abs_w, abs_b} = if absolute_pairs?, do: {abs_w, abs_b}, else: {0, 0}
 
     cond do
-      w > b + z -> colour_lb_side(div(w - b - z, 2), at.({"w", :mild}), pairable.("w"))
-      b > w + z -> colour_lb_side(div(b - w - z, 2), at.({"b", :mild}), pairable.("b"))
+      w > b + z -> colour_lb_side(div(w - b - z, 2), mild_w, abs_w)
+      b > w + z -> colour_lb_side(div(b - w - z, 2), mild_b, abs_b)
       true -> {0, 0}
     end
   end
+
+  defp colour_tally({"w", strength}, n, {w, b, z, mw, mb, aw, ab}) do
+    case strength do
+      :mild -> {w + n, b, z, mw + n, mb, aw, ab}
+      :absolute -> {w + n, b, z, mw, mb, aw + n, ab}
+      _ -> {w + n, b, z, mw, mb, aw, ab}
+    end
+  end
+
+  defp colour_tally({"b", strength}, n, {w, b, z, mw, mb, aw, ab}) do
+    case strength do
+      :mild -> {w, b + n, z, mw, mb + n, aw, ab}
+      :absolute -> {w, b + n, z, mw, mb, aw, ab + n}
+      _ -> {w, b + n, z, mw, mb, aw, ab}
+    end
+  end
+
+  defp colour_tally({nil, _strength}, n, {w, b, z, mw, mb, aw, ab}),
+    do: {w, b, z + n, mw, mb, aw, ab}
+
+  # No other preference is ever stamped; one would be counted under its own
+  # name and never read, as the tally did.
+  defp colour_tally(_type, _n, acc), do: acc
 
   defp colour_lb_side(k, mild, absolute), do: {k, max(0, k - mild - div(absolute, 2))}
 
@@ -5175,6 +5248,14 @@ defmodule Ainalrami.Pairing do
 
   defp direct_s1(env, st, s1, k, s2) do
     x = elem(s1, k)
+
+    # The used players at the head of S2 are dropped before the scan, and
+    # the shorter list is what the levels below get: they skip exactly the
+    # players this level would have skipped, in the same order, without
+    # re-reading the prefix the walk has already taken. Without it a
+    # 4,800-player S2 was walked from its head once per S1 player: 11
+    # million set lookups in round 1 of a 10,000-player field.
+    s2 = Enum.drop_while(s2, &MapSet.member?(st.used, &1))
 
     Enum.reduce_while(s2, :fail, fn y, acc ->
       if MapSet.member?(st.used, y) do
@@ -6913,45 +6994,62 @@ defmodule Ainalrami.Pairing do
   defp build_oracle(field, allowed_byes, ctx) do
     arr = List.to_tuple(field)
     n = length(field)
-    candidate? = fn i -> bye_candidate?(elem(arr, i), ctx.bye_score) end
+    candidates = List.to_tuple(for p <- field, do: bye_candidate?(p, ctx.bye_score))
+    candidate? = &elem(candidates, &1)
 
-    pairs =
-      for i <- 0..(n - 1)//1,
-          j <-
-            Enum.reduce_while((i + 1)..(n - 1)//1, {[], 0}, fn j, {acc, taken} ->
-              cond do
-                taken >= @oracle_degree ->
-                  {:halt, {acc, taken}}
+    # Each player's partners below them, nearest last.
+    below =
+      for i <- 0..(n - 1)//1 do
+        Enum.reduce_while((i + 1)..(n - 1)//1, {[], 0}, fn j, {acc, taken} ->
+          cond do
+            taken >= @oracle_degree ->
+              {:halt, {acc, taken}}
 
-                legal_pair?(elem(arr, i), elem(arr, j)) and
-                    colour_compatible?(elem(arr, i), elem(arr, j)) ->
-                  {:cont, {[j | acc], taken + 1}}
+            legal_pair?(elem(arr, i), elem(arr, j)) and
+                colour_compatible?(elem(arr, i), elem(arr, j)) ->
+              {:cont, {[j | acc], taken + 1}}
 
-                true ->
-                  {:cont, {acc, taken}}
-              end
-            end)
-            |> elem(0),
-          do: {i, j}
+            true ->
+              {:cont, {acc, taken}}
+          end
+        end)
+        |> elem(0)
+      end
 
     # The bye's stand-in, vertex `n`, on an odd field.
     x = if allowed_byes == 1, do: n
-    bye_edges = if x, do: for(i <- 0..(n - 1)//1, candidate?.(i), do: {i, x}), else: []
-    order = if x, do: n + 1, else: n
+
+    # Each row in ascending order, as sorting the edge list's rows gave
+    # them: the partners above (`i` in the order the list met them, so
+    # descending once prepended), the partners below, then the stand-in,
+    # which is above everyone. No row is sorted and no edge list is built,
+    # which was a fifth of a 10,000-player round.
+    above =
+      below
+      |> Enum.with_index()
+      |> Enum.reduce(%{}, fn {js, i}, acc ->
+        Enum.reduce(js, acc, fn j, acc -> Map.update(acc, j, [i], &[i | &1]) end)
+      end)
 
     rows =
-      Enum.reduce(pairs ++ bye_edges, %{}, fn {i, j}, acc ->
-        acc |> Map.update(i, [j], &[j | &1]) |> Map.update(j, [i], &[i | &1])
+      below
+      |> Enum.with_index()
+      |> Enum.map(fn {js, v} ->
+        tail = if x != nil and candidate?.(v), do: [x], else: []
+        Enum.reverse(Map.get(above, v, []), Enum.reverse(js, tail))
       end)
+
+    rows = if x, do: rows ++ [for(i <- 0..(n - 1)//1, candidate?.(i), do: i)], else: rows
 
     ref =
       if env_flag(@env_direct_key, "AINALRAMI_DIRECT") == "check" do
+        pairs = for {js, i} <- Enum.with_index(below), j <- js, do: {i, j}
         noncand = for i <- 0..(n - 1)//1, into: %{}, do: {i, bit(not candidate?.(i))}
         weighted_oracle(n, pairs, allowed_byes, noncand)
       end
 
     %{
-      adj: List.to_tuple(for v <- 0..(order - 1)//1, do: rows |> Map.get(v, []) |> Enum.sort()),
+      adj: List.to_tuple(rows),
       x: x,
       live: n,
       gone: MapSet.new(),
