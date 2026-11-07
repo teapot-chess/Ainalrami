@@ -1,5 +1,10 @@
 # Ainalrami
 
+> **Licence: reference source only.** Copyright 2026 Jorian Burssens. This code
+> is published under the [Microsoft Reference Source License (Ms-RSL)](LICENSE):
+> you may read it. You may not run, copy, modify or distribute it. See
+> [Licence](#licence).
+
 A FIDE Swiss pairing engine - the Dutch system, and now Dubov, Burstein and Lim - written in
 Elixir. No JVM, no external binary, no runtime dependencies.
 
@@ -1253,11 +1258,10 @@ cross-checking pairing correctness against any other engine.
 
 ## Licence
 
-Copyright 2026 Jorian Burssens. Ainalrami is source available under the
-[Functional Source License, Version 1.1, Apache 2.0 Future License](LICENSE)
-(FSL-1.1-ALv2). You may use, copy, modify and share it for any purpose except
-offering a competing product or service. Each release turns into Apache-2.0
-two years after it was published.
+Copyright 2026 Jorian Burssens. Ainalrami is published as reference source
+under the [Microsoft Reference Source License](LICENSE) (Ms-RSL). You may read
+it; you may not run, copy, modify or distribute it. Versions published before
+2026-11-07 keep the licence they were published under.
 
 One part is not ours to relicense: parts of this engine are derived
 from [bbpPairings](https://github.com/BieremaBoyzProgramming/bbpPairings),

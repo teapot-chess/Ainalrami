@@ -49,7 +49,7 @@ pairings"), so this application is for the Dutch system only.
 | Field | Answer |
 |---|---|
 | Download details | https://github.com/teapot-chess/Ainalrami/releases - each release has the built `ainalrami` file attached. Run it with `escript ainalrami ...` on Windows, `./ainalrami ...` elsewhere. Source: the same repository. |
-| Free software | Source available - Functional Source License 1.1 (FSL-1.1-ALv2); each release becomes Apache-2.0 two years after it is published |
+| Free software | No. Reference source only - Microsoft Reference Source License (Ms-RSL) |
 | Trial version limitations | None |
 
 ### Specifications
