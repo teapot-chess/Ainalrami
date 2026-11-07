@@ -57,8 +57,8 @@ defmodule Ainalrami.TeamThreeWayTest do
           `Ainalrami.Test.TeamThreeWay.forfeit_points_in_rows/1` says how
           the two read it; this one is a rewritten file, not a script.
         - *combined*: *following*, *float_forfeit* and *forfeit_gp* at once.
-      An `ac` difference takes the reading of the `ag` one when
-      chesspairing gives exactly Gacrux's answer;
+      An `ac` difference is named when each side is Gacrux's answer under
+      some set of readings (`classify_ac/5`);
       The replacements are a VM-side script, `gacrux_readings.py`, not in
       this repository (`GACRUX_READINGS`; without it nothing is classified
       this way);
@@ -223,22 +223,10 @@ defmodule Ainalrami.TeamThreeWayTest do
 
       # The counterfactual readings are run only when one can explain
       # something, and each at most once.
-      {kind_ag, cache} = classify(cmp(a, g), a, {file, r}, %{})
-      {kind_gc, cache} = classify(cmp(g, c), c, {file, r}, cache)
-      # chesspairing has no counterfactual of its own; when it gives Gacrux's
-      # answer, what separates Gacrux from Ainalrami separates it too.
-      kind_ac =
-        case {cmp(a, c), cmp(g, c)} do
-          {:identical, _} ->
-            :identical
-
-          {kind, :identical} when kind != :crash ->
-            if reading?(kind_ag), do: kind_ag, else: classify_plain(kind)
-
-          {kind, _} ->
-            classify_plain(kind)
-        end
-
+      at = {file, r, g}
+      {kind_ag, cache} = classify(cmp(a, g), a, at, %{})
+      {kind_gc, cache} = classify(cmp(g, c), c, at, cache)
+      {kind_ac, cache} = classify_ac(cmp(a, c), a, c, at, cache)
       kinds = %{ag: kind_ag, ac: kind_ac, gc: kind_gc}
 
       %{
@@ -320,25 +308,63 @@ defmodule Ainalrami.TeamThreeWayTest do
 
   # The other engine's answer, `other`, against Gacrux run with one reading
   # after another replaced (`@readings`): the first that gives it names the
-  # difference. A reading that cannot apply (no script, no `330`) is skipped.
+  # difference.
   defp classify(kind, _other, _at, cache) when kind in [:identical, :crash],
     do: {kind, cache}
 
-  defp classify(kind, other, {file, r}, cache) do
-    readings = Enum.filter(@readings, fn {_, reading} -> applies?(reading, file) end)
+  defp classify(kind, other, at, cache) do
+    case gacrux_as(other, at, cache) do
+      {name, cache} when name not in [nil, :plain] -> {name, cache}
+      {_, cache} -> {classify_plain(kind), cache}
+    end
+  end
 
-    if ok_or_refused?(other) do
-      Enum.reduce_while(readings, {classify_plain(kind), cache}, fn {name, reading}, {k, cache} ->
-        {g, cache} =
-          case cache do
-            %{^reading => g} -> {g, cache}
-            _ -> gacrux_reading(file, r, reading) |> then(&{&1, Map.put(cache, reading, &1)})
-          end
+  # chesspairing has no counterfactual of its own. When each side gives
+  # Gacrux's answer under some set of readings, the readings name the
+  # difference between them: Ainalrami's side's when it has one (the larger
+  # set), chesspairing's otherwise.
+  defp classify_ac(kind, _a, _c, _at, cache) when kind in [:identical, :crash],
+    do: {kind, cache}
 
-        if cmp(other, g) == :identical, do: {:halt, {name, cache}}, else: {:cont, {k, cache}}
-      end)
-    else
-      {classify_plain(kind), cache}
+  defp classify_ac(kind, a, c, at, cache) do
+    {side_a, cache} = gacrux_as(a, at, cache)
+    {side_c, cache} = gacrux_as(c, at, cache)
+
+    case {side_a, side_c} do
+      {nil, _} -> {classify_plain(kind), cache}
+      {_, nil} -> {classify_plain(kind), cache}
+      {:plain, :plain} -> {classify_plain(kind), cache}
+      {:plain, name} -> {name, cache}
+      {name, _} -> {name, cache}
+    end
+  end
+
+  # `:plain` when `answer` is Gacrux's own, else the first reading
+  # (`@readings`) under which Gacrux gives it, else nil. A reading that
+  # cannot apply (no script, no `330`) is skipped; each is run at most once
+  # a round.
+  defp gacrux_as(answer, {file, r, g}, cache) do
+    cond do
+      not ok_or_refused?(answer) ->
+        {nil, cache}
+
+      cmp(answer, g) == :identical ->
+        {:plain, cache}
+
+      true ->
+        @readings
+        |> Enum.filter(fn {_, reading} -> applies?(reading, file) end)
+        |> Enum.reduce_while({nil, cache}, fn {name, reading}, {nil, cache} ->
+          {gr, cache} =
+            case cache do
+              %{^reading => gr} -> {gr, cache}
+              _ -> gacrux_reading(file, r, reading) |> then(&{&1, Map.put(cache, reading, &1)})
+            end
+
+          if cmp(answer, gr) == :identical,
+            do: {:halt, {name, cache}},
+            else: {:cont, {nil, cache}}
+        end)
     end
   end
 
@@ -351,9 +377,6 @@ defmodule Ainalrami.TeamThreeWayTest do
     gacrux(file, r, opts)
   end
 
-  defp reading?(kind), do: kind |> to_string() |> String.starts_with?("reading_")
-
-  defp classify_plain(:crash), do: :crash
   defp classify_plain(:colour), do: :unexplained_colour
   defp classify_plain(:pairing), do: :unexplained_pairing
   defp classify_plain(:split), do: :unexplained_split
