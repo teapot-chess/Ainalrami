@@ -131,7 +131,16 @@ bracket, as the engine pairs) without borrowing the engine's weights.
 
 **Measured fidelity** (`fidelity`, local, 2026-11-08):
 
-FIDELITY_TABLE
+| hybrid compared with | corpus | variant | rounds | differing | 95% upper bound |
+|---|---|---|---:|---:|---:|
+| brute force | 10 x 7, 500 tournaments | baseline | 3,500 | 0 | 0.11% |
+| brute force | 10 x 7, 300 | `drop:C12+streak=3` | 2,100 | 0 | 0.18% |
+| brute force | 10 x 7, 300 | `move:C12:after:C21+float_memory=1` | 2,100 | 0 | 0.18% |
+| brute force | 10 x 7, 300 | `c3=off+drop:C13` | 2,100 | 0 | 0.18% |
+| brute force | 10 x 7, 300 | `move:C14:before:C10+float_memory=3` | 2,100 | 0 | 0.18% |
+| brute force | 10 x 6, 300, late entries | `c525=tpn` | 1,800 | 0 | 0.21% |
+| Ainalrami engine 0.51.1 | 40 x 9, 100 | baseline | 900 | 0 | 0.43% |
+| Ainalrami engine 0.51.1 | 100 x 11, 40 | baseline | 440 | 0 | 0.87% |
 
 Both arms of a comparison always use the same pairer, so an error of the
 hybrid would be common to baseline and variant; but an error that

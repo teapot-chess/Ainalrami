@@ -37,10 +37,10 @@ defmodule AinalramiLab.Criteria do
     "C19" => "2.4.14",
     "C20" => "2.4.15",
     "C21" => "2.4.16",
-    "C16@3" => "2.4.11, three rounds back (variant)",
-    "C17@3" => "2.4.12, three rounds back (variant)",
-    "C20@3" => "2.4.15, three rounds back (variant)",
-    "C21@3" => "2.4.16, three rounds back (variant)"
+    "C16@3" => "2.4.11 (n-3)",
+    "C17@3" => "2.4.12 (n-3)",
+    "C20@3" => "2.4.15 (n-3)",
+    "C21@3" => "2.4.16 (n-3)"
   }
 
   @summaries %{

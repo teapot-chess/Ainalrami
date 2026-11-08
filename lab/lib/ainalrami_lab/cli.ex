@@ -145,7 +145,7 @@ defmodule AinalramiLab.CLI do
 
       IO.puts(
         String.pad_trailing(c, 7) <>
-          String.pad_trailing(Criteria.article(c), 10) <> Criteria.summary(c) <> extra
+          String.pad_trailing(Criteria.article(c), 14) <> Criteria.summary(c) <> extra
       )
     end
 
