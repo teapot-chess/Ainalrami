@@ -1,7 +1,7 @@
 defmodule Ainalrami.MixProject do
   use Mix.Project
 
-  @version "0.51.1"
+  @version "0.51.2"
   @source_url "https://github.com/teapot-chess/Ainalrami"
 
   def project do
