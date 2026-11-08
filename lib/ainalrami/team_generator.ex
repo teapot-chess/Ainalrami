@@ -44,9 +44,10 @@ defmodule Ainalrami.TeamGenerator do
       forfeit's (`:forfeit_match_points`, default a loss's);
     * results (by the rating table, `:draw_rate` default 0.3), boards
       forfeited (`:board_forfeit_pct`), whole matches not turned up for
-      (`:match_forfeit_pct` - board by board or as a `330` with no boards),
-      teams sitting a round out (`:absent_team_pct`: every player has a
-      zero-point bye; in a round robin the match is then forfeited, `330`),
+      (`:match_forfeit_pct` - board by board, or as a `330` with every board
+      a forfeit, `--` excepted), teams sitting a round out
+      (`:absent_team_pct`: every player has a zero-point bye; in a round
+      robin the match is then forfeited, `330`, its first boards the `-`),
       players announced absent (`:absent_player_pct`: a zero-point bye,
       the players below moving up a board, a reserve filling in - never so
       many that a team cannot fill its boards), and lineups out of roster
@@ -492,10 +493,24 @@ defmodule Ainalrami.TeamGenerator do
     end
   end
 
-  # A `330` record and no board records: the winner a win's match points
-  # and a win on every board, the loser (both, in a double forfeit) the
-  # forfeit's match points and nothing - `Tiebreaks.Team.from_trf/2`'s
-  # reading.
+  # A `330` record: the winner a win's match points and a win on every
+  # board, the loser (both, in a double forfeit) the forfeit's match points
+  # and nothing - `Tiebreaks.Team.from_trf/2`'s reading.
+  #
+  # A one-sided forfeit (`+-`/`-+`) also goes on the players' lines, board
+  # by board: the winners `+` against the board's player of the absent
+  # team, who gets the `-` (TRF-2026, record 330, Notes 1 and 2 - XXXX "a
+  # player of the absent team", C `w`/`b`, and the matching forfeit loss on
+  # his line). Gacrux and anybody else who adds up a team's game points
+  # from its players' lines then sees the forfeit wins Mario Held's TPS
+  # example scores `0F-4F`; with the `330` alone they saw nothing, and the
+  # winners of a forfeited match had no game points. A team sitting the
+  # round out seated nobody, so its roster's first boards stand in. No
+  # board is played, so the reader still calls it a forfeited match.
+  #
+  # A double forfeit stays a bare `330 --`: neither team showed up, and by
+  # the record's own definition a team that shows up has its `001` records
+  # updated.
   defp declare_forfeit(st, r, a, b, whole, la, lb, ctx) do
     type = %{white: "+-", black: "-+", none: "--"}[whole]
     p = ctx.points
@@ -508,9 +523,17 @@ defmodule Ainalrami.TeamGenerator do
         :none -> {p.forfeit, 0.0, p.forfeit, 0.0}
       end
 
+    games =
+      if whole == :none do
+        st.games
+      else
+        forfeit_boards(st.games, r, whole, nominal(la, a, ctx), nominal(lb, b, ctx))
+      end
+
     st = %{
       st
-      | forfeits: [%{type: type, round: r, white: a, black: b} | st.forfeits],
+      | games: games,
+        forfeits: [%{type: type, round: r, white: a, black: b} | st.forfeits],
         mp: st.mp |> Map.update!(a, &(&1 + ma)) |> Map.update!(b, &(&1 + mb)),
         gp: st.gp |> Map.update!(a, &(&1 + ga)) |> Map.update!(b, &(&1 + gb)),
         won_by_forfeit:
@@ -522,6 +545,29 @@ defmodule Ainalrami.TeamGenerator do
     }
 
     {st, la, lb}
+  end
+
+  # The boards a forfeited match is written on: the team's line-up, or for
+  # a team that seated nobody, the first boards of its roster.
+  defp nominal([], team, ctx), do: seat(ctx.rosters[team], ctx)
+  defp nominal(lineup, _team, _ctx), do: lineup
+
+  # Board k: the first team's player against the second's, White on the
+  # odd boards for the first team (C.04.6 1.6.1), `+` for the winners and
+  # `-` for the side that did not turn up.
+  defp forfeit_boards(games, r, whole, la, lb) do
+    {ra, rb} = board_result(whole, nil, nil, nil)
+
+    la
+    |> Enum.zip(lb)
+    |> Enum.with_index(1)
+    |> Enum.reduce(games, fn {{x, y}, board}, games ->
+      x_white? = rem(board, 2) == 1
+
+      games
+      |> put_in([x, r], {y, if(x_white?, do: "w", else: "b"), ra})
+      |> put_in([y, r], {x, if(x_white?, do: "b", else: "w"), rb})
+    end)
   end
 
   defp play_boards(st, r, a, b, whole, la, lb, ctx) do
