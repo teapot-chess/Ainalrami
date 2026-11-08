@@ -6,6 +6,9 @@ defmodule AinalramiVerify.CLI do
       ainalrami-verify check ROUND.trf CERT.json
       ainalrami-verify rules ROUND.trf PAIRS [--no-colours]
       ainalrami-verify pair ROUND.trf
+      ainalrami-verify team-pair INPUT.json
+      ainalrami-verify team-certify INPUT.json [-o CERT.json] [--round OUTPUT.txt]
+      ainalrami-verify team-check INPUT.json CERT.json [OUTPUT.txt]
       ainalrami-verify exhaustive --players N --rounds R --dir DIR [--workers W] [--split S] [--results wdl|wl]
       ainalrami-verify sample --players N --rounds R --walks K --dir DIR [--seed S] [--workers W]
 
@@ -14,7 +17,17 @@ defmodule AinalramiVerify.CLI do
   input error.
   """
 
-  alias AinalramiVerify.{Bracket, Certificate, Exhaustive, PairsFile, Position, RuleCheck, Trf}
+  alias AinalramiVerify.{
+    Bracket,
+    Certificate,
+    Engine,
+    Exhaustive,
+    PairsFile,
+    Position,
+    RuleCheck,
+    TeamCheck,
+    Trf
+  }
 
   def main(argv) do
     code =
@@ -71,6 +84,80 @@ defmodule AinalramiVerify.CLI do
 
   def run(["check", trf, cert]) do
     case Certificate.check(File.read!(trf), cert |> File.read!() |> Certificate.decode()) do
+      :ok ->
+        IO.puts("OK")
+        0
+
+      {:error, message} ->
+        IO.puts("FAIL: " <> message)
+        1
+    end
+  end
+
+  def run(["team-pair", input]) do
+    case input |> File.read!() |> JSON.decode!() |> Engine.team_pair() do
+      {:ok, round} ->
+        IO.write(Engine.team_output(round))
+        0
+
+      {:error, reason} ->
+        IO.puts(:stderr, "the engine refused the round: #{inspect(reason)}")
+        1
+    end
+  end
+
+  def run(["team-certify", input | rest]) do
+    {opts, _, _} =
+      OptionParser.parse(rest, strict: [output: :string, round: :string], aliases: [o: :output])
+
+    text = File.read!(input)
+    record = JSON.decode!(text)
+
+    round =
+      case opts[:round] do
+        nil -> Engine.team_pair(record)
+        path -> {:ok, TeamCheck.parse_output(File.read!(path))}
+      end
+
+    with {:ok, round} <- round,
+         {:ok, cert} <- Engine.team_certify(record, round, Certificate.sha256(text)),
+         :ok <- TeamCheck.check(text, cert) do
+      json = JSON.encode!(cert)
+
+      case opts[:output] do
+        nil -> IO.puts(json)
+        path -> File.write!(path, json)
+      end
+
+      IO.puts(
+        :stderr,
+        "certified: round #{cert["round"]}, #{length(cert["brackets"])} bracket(s)"
+      )
+
+      0
+    else
+      {:error, {:not_optimal, step}} ->
+        IO.puts(:stderr, "NOT CERTIFIED: the round is not the one C.04.6 defines (#{step})")
+        1
+
+      {:error, reason} ->
+        IO.puts(
+          :stderr,
+          "NOT CERTIFIED: #{if is_binary(reason), do: reason, else: inspect(reason)}"
+        )
+
+        1
+    end
+  end
+
+  def run(["team-check", input, cert | output]) do
+    out =
+      case output do
+        [path] -> File.read!(path)
+        [] -> nil
+      end
+
+    case TeamCheck.check(File.read!(input), cert |> File.read!() |> JSON.decode!(), out) do
       :ok ->
         IO.puts("OK")
         0

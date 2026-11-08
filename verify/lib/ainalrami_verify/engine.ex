@@ -50,6 +50,30 @@ defmodule AinalramiVerify.Engine do
   end
 
   @doc """
+  Pair a team round (C.04.6) from its input record (a decoded
+  `ainalrami-team-input`) with `Ainalrami.TeamPairing.pair_round/2`.
+  Returns `{:ok, %{pairs: [%{white:, black:}], bye: tpn | nil}}` or
+  `{:error, reason}`.
+  """
+  def team_pair(input) when is_map(input) do
+    with {:ok, teams, opts} <- Ainalrami.TeamCertificate.decode_input(input),
+         {:ok, result} <- Ainalrami.TeamPairing.pair_round(teams, opts) do
+      {:ok, %{pairs: result.pairs, bye: result.bye}}
+    end
+  end
+
+  @doc """
+  The certificate `Ainalrami.TeamCertificate.certify/3` writes for `round`
+  of the input record. The duals it holds are found by the engine's
+  matcher; `AinalramiVerify.TeamCheck` decides whether they prove anything.
+  """
+  def team_certify(input, round, input_sha256),
+    do: Ainalrami.TeamCertificate.certify(input, round, input_sha256)
+
+  @doc "The pairing list of a team round, as the engine's host writes it."
+  def team_output(round), do: Ainalrami.TeamCertificate.output_text(round)
+
+  @doc """
   A maximum-weight matching of `edges` (`[{u, v, w}]`, positive integer
   weights, vertices `0..n-1`) with its dual solution, from the engine's
   matcher: `%{mate: %{u => v}, dual: %{v => y}, blossoms: [{[v], z}],
