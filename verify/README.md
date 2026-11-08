@@ -1,13 +1,15 @@
 # ainalrami-verify
 
 Three independent checks of the Dutch engine one directory up, against
-C.04.3 (FIDE Dutch System, 2026 edition):
+C.04.3 (FIDE Dutch System, 2026 edition), and a fourth for its team
+engine (C.04.6):
 
 | command | answers |
 |---|---|
 | `certify` / `check` | Is this published round a maximum-weight round of the C.04.3 weights, recomputed from the TRF? A certificate says so, and a small checker confirms it with integer arithmetic. |
 | `rules` | Which articles does this pairing break? Absolute criteria first, then quality criteria, then colours, with the article number and the players involved. |
 | `exhaustive` / `sample` | Does the engine agree with a brute-force reading of the rules on every tournament that can happen, up to a given size? |
+| `team-certify` / `team-check` | Is this team round the one C.04.6 defines, from its input record? A certificate of matching duals says so, checked the same way (Part 4). |
 
 None of the three trusts the engine's search. The rule checker and the
 brute force share no code with it, and the certificate checker recomputes
@@ -208,3 +210,71 @@ Use `nohup` or `tmux`. A stopped run continues when restarted with the
 same command. `--split 3` makes enough jobs for 78 workers, but the split
 is part of the parameters, so a directory started with one split cannot
 continue with another.
+
+## Part 4: team certificates (C.04.6)
+
+    ./ainalrami-verify team-pair input.json                          # the engine's round, as a pairing list
+    ./ainalrami-verify team-certify input.json [--round output.txt] -o cert.json
+    ./ainalrami-verify team-check input.json cert.json [output.txt]  # OK, or FAIL: <condition>
+
+`input.json` is an `ainalrami-team-input` record, version 1, written by
+`Ainalrami.TeamCertificate.input/2` when a host pairs a team round: the
+round, `expected_rounds`, `score_mode`, `use_secondary`, `type`,
+`initial_colour`, `absent`, `forbidden_pairs` / `soft_pairs` (groups, with
+optional `from`/`to` rounds), and per team the fields of
+`Ainalrami.TeamPairing.Team`. `output.txt` is the pairing list: a count
+line, `white black` per match, `tpn 0` for the bye. The certificate is
+written by the engine's `Ainalrami.TeamCertificate.certify/3` (format
+`ainalrami-team-certificate`, version 1, weights `c0406-2026-1`); its duals
+are found with the engine's matcher, and `team-check` decides alone
+whether they prove anything.
+
+C.04.6 3.6 defines a bracket's pairing as the FIRST in an order among the
+ones that minimise [C8]-[C10], and 3.5 the upfloaters as the first set in
+another; `../docs/team-proof-large-fields.md` shows both are cheapest
+perfect matchings once the counts are packed into one integer. A
+certificate carries the duals of those matchings, with the round itself as
+the primal, so `team-check` needs no search. It verifies:
+
+* the input is the one certified (SHA-256), and the round its round;
+* legality: every team placed once, a bye exactly when the field is odd
+  and only for a team [C2] allows, no rematch and no forbidden pair ([C1]);
+* Article 4: every match's colours, allocated here (4.2 first-team, then
+  4.3.1-4.3.9) and compared;
+* 3.4: the certificate passes over exactly the eligible teams ahead of the
+  bye (lowest score, most matches played, largest TPN), each with a dual
+  whose bound `f * (sum y + sum z (|S|-1)/2)` is below the number of the
+  other teams - so without that team nobody pairs everybody (3.4.1);
+* per bracket (residents: the highest score still unpaired; upfloaters:
+  the lower teams the round seats against a resident), three duals, each
+  checked as in Part 1 (feasible, every board tight, complementary
+  slackness, equal objectives):
+  * **3.5**, over every team not yet paired. Per pair, most significant
+    first: `k` 1 for resident-lower ([C4]); one `c5` digit per lower score
+    level, lowest level first, 1 for resident-lower on that level ([C5]);
+    `u` 1 for two lower teams of which exactly one has the following
+    score ([C6]); `c7` 1 for resident-lower when the lower team floated
+    last round, 0 in the last two rounds ([C7]); `pos` `2^L - 2^(L-p)`
+    for resident-lower, `p` the lower team's place by (score desc, TPN)
+    (3.5.4). The optimum fixes the upfloater set uniquely.
+  * **3.6 top set**, over the bracket in TPN order: `c8` 1 when both teams
+    want the same colour; `c10` the number of the pair's teams that
+    floated last round facing an upfloater, 0 in the last two rounds;
+    `soft` 1 for a soft pair; `tops` `2^m - 2^(m-i)`, `i` the smaller
+    team's index.
+  * **3.6 bottoms**, confined to pairs from the round's top set to the
+    rest: `c8`, `c10`, `soft`, then `rank(bottom) * h^(h-1-rank(top))`.
+
+  Each digit's base is 1 plus the sum over the teams of its largest value
+  on a pair at that team, so the packed cost orders lexicographically;
+  a pair weighs `(n/2) * max_cost + 1 - cost`, so the maximum-weight
+  matching is the cheapest perfect one.
+
+Readings are the engine's documented ones (Type A, [C1] symmetric,
+open question 6 is the host's boolean), and the checker proves the round
+follows them, not that they are FIDE's. Type B colour preferences are
+refused. Tests: `test/team_check_test.exs` certifies and checks played
+events (`test/support/team_walk.ex`) under match points and game points,
+with teams kept apart, and refuses re-partnered brackets, turned-round
+colours, tampered duals and a pairing list that is not the certified one.
+A one-off sweep of 2,938 rounds of 5-80 teams found no round refused.
