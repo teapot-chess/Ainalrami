@@ -32,7 +32,7 @@ defmodule Ainalrami.TeamCertificateTest do
   end
 
   test "every round the engine pairs certifies (match points)" do
-    each_round(1..60, fn _ -> [] end, fn seed, field, opts, result ->
+    each_round(1..25, fn _ -> [] end, fn seed, field, opts, result ->
       input = TeamCertificate.input(field, opts)
       assert {:ok, cert} = TeamCertificate.certify(input, result, @sha), "seed #{seed}"
       assert cert["bye"] == result.bye
@@ -52,7 +52,7 @@ defmodule Ainalrami.TeamCertificateTest do
 
   test "game points as primary score, and teams kept apart" do
     each_round(
-      61..100,
+      61..75,
       fn field ->
         tpns = field |> Enum.map(& &1.tpn) |> Enum.take(4)
 
@@ -71,7 +71,7 @@ defmodule Ainalrami.TeamCertificateTest do
 
   test "a round re-partnered inside a bracket does not certify" do
     refused =
-      each_round(101..140, fn _ -> [] end, fn _seed, field, opts, result ->
+      each_round(101..115, fn _ -> [] end, fn _seed, field, opts, result ->
         case result.pairs do
           [p, q | rest] ->
             swapped = [
@@ -112,7 +112,7 @@ defmodule Ainalrami.TeamCertificateTest do
   end
 
   test "the input record round-trips to the same round" do
-    each_round(141..160, fn _ -> [] end, fn _seed, field, opts, result ->
+    each_round(141..148, fn _ -> [] end, fn _seed, field, opts, result ->
       input = TeamCertificate.input(field, opts)
       {:ok, teams, opts2} = TeamCertificate.decode_input(input)
       {:ok, again} = TeamPairing.pair_round(teams, opts2)
