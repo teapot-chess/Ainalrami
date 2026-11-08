@@ -58,7 +58,7 @@ are TieBreakServer defects against the text and stay on the text.
 | T7 | "tied in both MP and GP" (13.3.2) | **text: 13.3.2** with Article 12's preamble, "the same number of match points and game points" - the totals | unchanged, still a known difference |
 | Q1 | SSSC divisor rounding to 0 (13.4.2 b) | the text gives 0 and no rule for it; TieBreakServer divides by it and raises (`decimal.DivisionByZero`), so gives no answer to follow. 13.4.2 b allows "a different value if stated by the rules of the competition"; we keep 1 | unchanged |
 | Q2 | 16.2.5's "last round" part-way | ambiguous; TieBreakServer (`lna`: the last round counted) | unchanged |
-| Q3 | unplayed team matches in Article 12 | the text names only the pairing-allocated bye; TieBreakServer gives every unplayed match its result on every board (`gamescore[res]` per board) | **changed**: a full-point bye now scores a win on every board and a half-point bye a draw (a forfeit win already did) |
+| Q3 | unplayed team matches in Article 12 | the text names only the pairing-allocated bye; TieBreakServer gives every unplayed match its result on every board (`gamescore[res]` per board) | **changed**: a full-point bye now scores a win on every board and a half-point bye a draw (a forfeit win already did; for a forfeited match that is the TEC's own scoring, Held's *Mastering the TPS* 2026 round 4, "0F-4F", reading T8) |
 | Q4 | which outcomes 6.3 enumerates | as reading 6; TieBreakServer counts a missing game as a win at best, a loss at worst | unchanged |
 | M1 | `/P` outside DE (Mandatory Tie-Breaks table) | the table defines it ("forfeited games ... are considered as played games against the scheduled opponent") but cites 16.5, which is the Cut-1 exception; TieBreakServer's `/P` (its `predetermined` flag) | **new**: forfeits are games against the scheduled opponent's adjusted score, and not VURs |
 | M2 | SSSC's `/Kx` | the table: "redefine the normalizing factor in SSSC"; 13.4.2 b's "or by a different value"; TieBreakServer (`K` sets the divisor) | **new**: `K<n>`, n a whole number from 1 |
@@ -498,8 +498,17 @@ scored it is a double forfeit - no match points to either. A match with at
 least one board played is an ordinary match, however many boards were
 forfeited (as C.04.6's "won a match by forfeit" is read, see
 `Ainalrami.TeamPairing.Team`). A `330` record forfeits a match neither team
-has board records for: the winner takes a win on every board, as Article 12
-treats a pairing-allocated bye. The one case C.07 does not settle - boards
+has board records for: the winner takes a win on every board. That is no
+longer a reading by analogy with Article 12's pairing-allocated bye: Mario
+Held's *Mastering the FIDE Team Pairing System* (FIDE TEC, 2026, ver.
+2607090900), the worked example of C.04.6, says "the opponents of absent
+players get a forfeit win fully equivalent to a victory on-the-board", and
+when "Team #8 did not show in time to play, thus forfeiting the match" in
+round 4 it scores the match `0F-4F` - every board to the team that came.
+Since 0.53.0 the generator writes such a match on the players' lines as
+well (`+` against the absent team's board, `-` on that line; TRF-2026 330
+Notes 1 and 2), so a reader that adds up the `001` lines gets the same
+game points; the file reads exactly as before. The one case C.07 does not settle - boards
 forfeited both ways, none played, level on game points - is a drawn match,
 as TieBreakServer scores it. Before 2026-09-26 every such match was read
 as played, so a double forfeit was a drawn match worth a draw's match

@@ -36,6 +36,19 @@ from measurement rather than from the rules text:
   own game count. It confirms both halves of the `final_round_topscorers?/2`
   fix independently of bbpPairings.
 
+Its team counterpart, added 2026-11-09: **Mario Held, *Mastering the FIDE
+Team Pairing System*** (ver. 2607090900), the worked example of C.04.6,
+published by the FIDE Technical Commission
+(<https://tec.fide.com/wp-content/uploads/2026/07/Mastering_the_TPS_2026.pdf>).
+It is the source for how a match forfeited as a whole is scored: in round 4
+"Team #8 did not show in time to play, thus forfeiting the match", the
+results table scores it `0F-4F`, and the opponents of absent players get
+"a forfeit win fully equivalent to a victory on-the-board". The pairing "may
+be repeated in a future round"; game points serve only 4.2.2 and the first
+tie-break; the PAB is 1 MP and 2 GP. See `conformance-c0406-teams.md`
+(question 6, *Forfeited matches*) and `conformance-c07-tiebreaks.md`
+(reading T8, Q3).
+
 Written down here because this project's rule is that anything touching a
 FIDE rule needs the handbook text in hand rather than a paraphrase, and
 because the numbering itself is new: the February 2026 revision introduced

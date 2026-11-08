@@ -397,7 +397,7 @@ July 2026.
 | Q | Reading implemented | Where | Confidence |
 |---|---|---|---|
 | 5 | [C5]'s best profile among LEGAL sets ([C3] kept) of the [C4]-minimal size; the 3.5.4 example holds when {2,6,8} cannot be paired. Not [C6]. | `TeamPairing.c5_profile_key/2`, `legality/3` | medium-high (high that it is not [C6]) |
-| 6 | A match is won by forfeit when the opponent played no game in it (every board forfeited). One game played makes it a played match, which does not bar the bye. | the host's `%Team{won_by_forfeit?: _}`; documented on `Team` | high; medium for matches forfeited by decision after play |
+| 6 | A match is won by forfeit when the opponent played no game in it (every board forfeited). One game played makes it a played match, which does not bar the bye. The winner scores every board (Held, *Mastering the TPS* 2026: `0F-4F`). | the host's `%Team{won_by_forfeit?: _}`; documented on `Team` | high; medium for matches forfeited by decision after play |
 | 7 | Minimise [C7] among compliant sets, then 3.5.4's order. | `TeamPairing.c7_previous_floaters/2` | high |
 
 Evidence in brief. **Q5:** the example is word for word in the 2024 edition
@@ -414,7 +414,14 @@ in descending priority", "the first X that complies with [a minimisation]"
 is the chapter's standing phrasing (3.6.4), Dubov 2026 says "complies at
 best", and 2026 moved floater avoidance up into set selection.
 
-C.04.2 3.5 also settles a point the host needs: "two paired participants,
+The match's game points are no longer inferred: Mario Held's *Mastering the
+FIDE Team Pairing System* (FIDE TEC, 2026), the worked example of C.04.6,
+gives "the opponents of absent players ... a forfeit win fully equivalent
+to a victory on-the-board" and scores a team that "did not show in time to
+play" `0F-4F` (round 4) - every board to the team that came.
+
+C.04.2 3.5 also settles a point the host needs (and Held's round 4 repeats
+it: the forfeited pairing "may be repeated in a future round"): "two paired participants,
 who did not play their game or match, may be paired together in a future
 round" - a match forfeited as a whole is not a meeting for [C1].
 
@@ -490,6 +497,16 @@ brute-force reference.
   (OpenPairings: the Teams page's roster order).
 * ~~**Forfeited matches.**~~ **Answered 2026-09-13** by research (question
   6 above): the opponent played no game in the match. The host computes it.
+  The game points of such a match have a source since 2026-11-09: Mario
+  Held, *Mastering the FIDE Team Pairing System* (FIDE TEC, 2026, ver.
+  2607090900), the worked C.04.6 example, scores round 4's no-show ("Team
+  #8 did not show in time to play, thus forfeiting the match") `0F-4F`:
+  every board to the team that came, "a forfeit win fully equivalent to a
+  victory on-the-board". The same example says the pairing "may be
+  repeated in a future round", that game points serve only 4.2.2 and the
+  first tie-break, and that the PAB is 1 MP and 2 GP. The generator writes
+  such a match on the players' lines too (TRF-2026 330 Notes 1 and 2) as
+  well as in the `330`.
 * **Questions 5-7** are answered by research, not ruled on. Still worth
   sending to the SPP with the wording in OpenPairings'
   `docs/teams-phase-2-plan.md`.
