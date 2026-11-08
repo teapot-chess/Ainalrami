@@ -136,3 +136,46 @@ jobs:
 
     - name: Build the escript
       run: mix escript.build
+
+  # lab/ is the rule-change simulator (see lab/README.md): a sibling of
+  # verify/ that depends on it by path, and through it on the engine. The
+  # engine does not depend on it, so it gets its own job too.
+  lab:
+    name: Lab (ainalrami-lab)
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: lab
+
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+    - name: Set up Elixir
+      uses: erlef/setup-beam@54075bcc5e249e4758d363f27d099f55d843f124 # v1.24.1
+      with:
+        elixir-version: '1.20'
+        otp-version: '29.0'
+
+    - name: Restore build cache
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: |
+          lab/deps
+          lab/_build
+        key: ${{ runner.environment }}-${{ runner.os }}-lab-${{ hashFiles('mix.exs', 'verify/mix.exs', 'lab/mix.exs') }}
+        restore-keys: ${{ runner.environment }}-${{ runner.os }}-lab-
+
+    - name: Install dependencies
+      run: mix deps.get
+
+    - name: Compile
+      run: mix compile --warnings-as-errors
+
+    - name: Check formatting
+      run: mix format --check-formatted
+
+    - name: Run tests
+      run: mix test
+
+    - name: Build the escript
+      run: mix escript.build
