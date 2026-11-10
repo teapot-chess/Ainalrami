@@ -66,6 +66,8 @@ with the reference on every one of them.
 
 ## [Unreleased]
 
+## [0.55.0] - 2026-11-10
+
 - [Change] A TRF whose opponent references do not point back at each other is refused when it is read, in every mode. Players 1 and 3 both claiming to have beaten player 2 is not a history, it is two histories, and the engine used to pair round 2 on whichever it met first. The message names the round and the disagreement ("round 1: A lists 2 as opponent, but 2 lists 3"). A reference to a player who is not in the file is still tolerated.
 
 ## [0.54.0] - 2026-11-10
