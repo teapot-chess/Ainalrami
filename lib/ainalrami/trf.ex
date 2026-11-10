@@ -2230,10 +2230,37 @@ defmodule Ainalrami.Trf do
               "#{inspect(result)} - opponentless games must use a bye code (F/H/Z/U)"
 
       result in @opposed_codes ->
+        if opts[:require_mutual], do: check_mutual!(player, round, game, by_rank)
         validate_playing_pair!(player, round, game, by_rank, result)
 
       true ->
         :ok
+    end
+  end
+
+  # `parse/1` always holds the whole roster, so an opponent that resolves to a
+  # real player whose own line for that round names someone else (or nobody)
+  # is a history that cannot be true: two players cannot both have beaten the
+  # same third one. A reference to a rank not in the file stays tolerated.
+  defp check_mutual!(player, round, game, by_rank) do
+    with opp_rank when not is_nil(opp_rank) <- game[:opponent_rank],
+         opponent when not is_nil(opponent) <- Map.get(by_rank, opp_rank) do
+      back = Enum.at(opponent[:games] || [], round - 1)
+
+      unless back && back[:opponent_rank] == player[:rank] do
+        listed =
+          case back && back[:opponent_rank] do
+            nil -> "nobody"
+            rank -> to_string(rank)
+          end
+
+        raise ValidationError,
+          message:
+            "round #{round}: #{player_label(player)} lists #{opp_rank} as opponent, " <>
+              "but #{opp_rank} lists #{listed}"
+      end
+    else
+      _ -> :ok
     end
   end
 
@@ -2459,7 +2486,8 @@ defmodule Ainalrami.Trf do
 
     validate_games!(result.players,
       allow_dangling_playing_code: true,
-      allow_unknown_result: true
+      allow_unknown_result: true,
+      require_mutual: true
     )
 
     # The round about to be paired, counted once for both of the records

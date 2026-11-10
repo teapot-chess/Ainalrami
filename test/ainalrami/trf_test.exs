@@ -681,6 +681,33 @@ defmodule Ainalrami.TrfTest do
     end
   end
 
+  describe "mutual opponent references" do
+    @asym """
+    012 Probe
+    XXR 5
+    001    1      A                                2000                             0.0    1      2 w 1
+    001    2      B                                1900                             0.0    2      3 b 0
+    001    3      C                                1800                             0.0    3      2 w 1
+    001    4      D                                1700                             0.0    4      0 - U
+    """
+
+    test "a game that the opponent's line does not return is refused" do
+      assert_raise Ainalrami.Trf.ValidationError,
+                   ~r/round 1: A lists 2 as opponent, but 2 lists 3/,
+                   fn -> Ainalrami.Trf.parse(@asym) end
+    end
+
+    test "a consistent history parses" do
+      text =
+        @asym
+        |> String.replace("2      3 b 0", "2      1 b 0")
+        |> String.replace("3      2 w 1", "3      4 w 1")
+        |> String.replace("4      0 - U", "4      3 b 0")
+
+      assert %{players: [_, _, _, _]} = Ainalrami.Trf.parse(text)
+    end
+  end
+
   describe "XXR (JaVaFo's round-count extension)" do
     # A two-player roster plus whatever extension lines the test wants.
     defp roster_trf(extra) do
