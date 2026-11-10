@@ -300,7 +300,12 @@ defmodule Ainalrami.Tiebreaks.Team do
   defp unfilled?(g), do: is_nil(g.opponent) and g.kind in [:full_bye, :pab]
 
   defp trf_match(games, team_of, points, pab_team?) do
-    met = Enum.filter(games, fn {_, _, g} -> g.opponent end)
+    # A game against a player on no team's roster says nothing about which
+    # team this one met - `TeamReplay.read_round/6` reads it the same way.
+    # Counting it named `nil` as the opponent team, and the match points
+    # then looked `nil` up as a team (sweep 2026-11, AIN-2).
+    met =
+      Enum.filter(games, fn {_, _, g} -> g.opponent && Map.has_key?(team_of, g.opponent) end)
 
     case met do
       [] ->

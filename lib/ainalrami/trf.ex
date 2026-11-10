@@ -2375,11 +2375,13 @@ defmodule Ainalrami.Trf do
           "320" ->
             put_in(acc.tournament[:team_pab], parse_320(line))
 
+          # Prepended and reversed below, as `001` is: `++` here made a
+          # file of 32,000 `300` lines take 13 s (sweep 2026-11, AIN-4).
           "330" ->
-            update_in(acc.tournament[:forfeited_matches], &((&1 || []) ++ [parse_330(line)]))
+            update_in(acc.tournament[:forfeited_matches], &[parse_330(line) | &1 || []])
 
           "300" ->
-            update_in(acc.tournament[:board_orders], &((&1 || []) ++ [parse_300(line)]))
+            update_in(acc.tournament[:board_orders], &[parse_300(line) | &1 || []])
 
           "362" ->
             put_in(acc.tournament[:team_point_system], parse_362(line))
@@ -2438,13 +2440,21 @@ defmodule Ainalrami.Trf do
     # above); every other key keeps file order as it always did.
     result = %{result | players: Enum.reverse(result.players), teams: Enum.reverse(result.teams)}
 
+    result =
+      Enum.reduce([:forfeited_matches, :board_orders], result, fn key, result ->
+        case result.tournament do
+          %{^key => list} -> put_in(result.tournament[key], Enum.reverse(list))
+          _ -> result
+        end
+      end)
+
     # A file with TRF26 `310` team records is read from them, and its `013`
     # lines (if any, written for older readers) are then ignored - the same
     # precedence TieBreakServer gives them (`trf2json.py`, `read_all_lines`).
     result =
       case Map.pop(result, :teams_310) do
         {nil, result} -> result
-        {teams, result} -> %{result | teams: Enum.reverse(teams)}
+        {teams, result} -> %{result | teams: teams |> Enum.reverse() |> check_team_numbers!()}
       end
 
     validate_games!(result.players,
@@ -3704,7 +3714,7 @@ defmodule Ainalrami.Trf do
 
   defp parse_player_line(line) do
     %{
-      rank: parse_int(read(line, @player_cols.starting_rank)),
+      rank: starting_rank!(line),
       sex: line |> read(@player_cols.sex) |> String.downcase(),
       title: read(line, @player_cols.title),
       name: read(line, @player_cols.name),
@@ -3716,6 +3726,24 @@ defmodule Ainalrami.Trf do
       final_rank: parse_int(read(line, @player_cols.rank)),
       games: parse_games(line)
     }
+  end
+
+  # TRF's starting rank is four columns, 1..9999. `0` is the bye marker of
+  # the pairing output, so a player ranked 0 was paired and printed as
+  # `0 1` - a bye for player 1, to anyone reading it - and a negative or
+  # blank rank went on until something downstream tripped over it (sweep
+  # 2026-11, AIN-3).
+  defp starting_rank!(line) do
+    raw = read(line, @player_cols.starting_rank)
+
+    case Integer.parse(raw) do
+      {rank, ""} when rank in 1..9999 ->
+        rank
+
+      _ ->
+        raise ValidationError,
+          message: "001: starting rank must be 1..9999, got #{inspect(raw)}: #{String.trim(line)}"
+    end
   end
 
   # Stops on where the line's real content actually ends, not on the first
@@ -3839,6 +3867,34 @@ defmodule Ainalrami.Trf do
   defp team_310_player_cols(slot) do
     base = 74 + (slot - 1) * 5
     {base, base + 3}
+  end
+
+  # C.04.6 1.1.1: teams are numbered 1..N, each once. A `310` team numbered
+  # 0 was written out as "team 2 vs team 0" - a bye, to every reader - and
+  # two teams on one number left one roster unread, its players on no team
+  # (sweep 2026-11, AIN-6). A blank number keeps the file-order fallback.
+  defp check_team_numbers!(teams) do
+    Enum.reduce(teams, MapSet.new(), fn team, seen ->
+      number = team[:number]
+
+      cond do
+        is_nil(number) ->
+          seen
+
+        number < 1 ->
+          raise ValidationError,
+            message: "310 #{inspect(team.name)}: team number must be 1 or more, got #{number}"
+
+        MapSet.member?(seen, number) ->
+          raise ValidationError,
+            message: "310 #{inspect(team.name)}: team number #{number} is already another team's"
+
+        true ->
+          MapSet.put(seen, number)
+      end
+    end)
+
+    teams
   end
 
   defp parse_310(line) do

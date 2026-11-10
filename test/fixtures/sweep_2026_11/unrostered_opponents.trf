@@ -1,0 +1,21 @@
+012 Ainalrami team RTG seed=7
+062 10
+082 5
+092 Team Swiss System
+142 3
+152 W
+192 FIDE_TEAM_TYPEA_MP_GP
+212 MPTS,GPTS,EDE,SB
+001    1      Player 1                          2531                             1.5    1     5 w 0     7 w =     3 b 1
+001    2      Player 2                          2488                             2.0    2     6 b 1     8 b =     4 w =
+001    3      Player 3                          2471                             1.0    3     7 b 0  0000 - U     1 w 0
+001    4      Player 4                          2465                             2.0    4     8 w =  0000 - U     2 b =
+001    5      Player 5                          2435                             2.5    5     1 b 1     9 w =  0000 - U
+001    6      Player 6                          2415                             1.0    6     2 w 0    10 b 0  0000 - U
+001    7      Player 7                          2354                             2.5    7     3 w 1     1 b =     9 b 1
+001    8      Player 8                          2362                             2.0    8     4 b =     2 w =    10 w 1
+001    9      Player 9                          2303                             1.5    9  0000 - U     5 b =     7 w 0
+001   10      Player 10                         2276                             2.0   10  0000 - U     6 w 1     8 b 0
+310   1 Team 1                                           4.0    3.5   2     1    2
+362  W 2.0    D 1.0    L 0.0    P 1.0    A 0.0
+320  1.0  1.0   5   2   3
