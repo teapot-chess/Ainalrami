@@ -194,7 +194,8 @@ defmodule Ainalrami.TeamPairing do
   its bound.
   """
   def pair_round(teams, opts \\ []) when is_list(teams) do
-    with {:ok, mode} <- validate_score_mode(Keyword.get(opts, :score_mode, :match_points)),
+    with :ok <- validate_teams(teams),
+         {:ok, mode} <- validate_score_mode(Keyword.get(opts, :score_mode, :match_points)),
          :ok <- validate_type(Keyword.get(opts, :type, :a)),
          {:ok, absent} <- validate_absent(Keyword.get(opts, :absent, []), teams),
          {:ok, explain} <- validate_explain(opts),
@@ -345,6 +346,35 @@ defmodule Ainalrami.TeamPairing do
   end
 
   defp validate_absent(absent, _teams), do: {:error, {:invalid_option, :absent, absent}}
+
+  # The teams themselves keep the same promise. Two teams on one TPN were
+  # paired against each other, and a `nil` score raised ArithmeticError -
+  # reachable through `TeamCertificate.decode_input/1`, which hands a stored
+  # input record straight to this function (sweep 2026-11, AIN-7).
+  defp validate_teams(teams) do
+    cond do
+      not Enum.all?(teams, &match?(%Team{}, &1)) ->
+        {:error, {:invalid_option, :teams, Enum.reject(teams, &match?(%Team{}, &1))}}
+
+      bad = Enum.find(teams, &(not valid_team?(&1))) ->
+        {:error, {:invalid_option, :teams, bad}}
+
+      dup = duplicate_tpn(teams) ->
+        {:error, {:invalid_option, :teams, {:duplicate_tpn, dup}}}
+
+      true ->
+        :ok
+    end
+  end
+
+  defp valid_team?(%Team{tpn: tpn, match_points: mp, game_points: gp}),
+    do: is_integer(tpn) and tpn >= 1 and is_number(mp) and is_number(gp)
+
+  defp duplicate_tpn(teams) do
+    teams
+    |> Enum.frequencies_by(& &1.tpn)
+    |> Enum.find_value(fn {tpn, n} -> if n > 1, do: tpn end)
+  end
 
   # `pair_round/2`'s `@doc` promises `{:ok, _} | {:error, _}`, and an unknown
   # `:score_mode` did not keep that promise: it was threaded unvalidated into

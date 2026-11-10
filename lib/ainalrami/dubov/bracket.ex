@@ -110,48 +110,134 @@ defmodule Ainalrami.Dubov.Bracket do
   # then the second's ...), keeping the least {C7, C8, C9, C10} and the
   # first set to reach it. A set is only looked at closely when the cheap
   # half of its key could still win.
+  #
+  # The walk is a branch and bound over the same order. At every branch the
+  # least rough key any set below it could have - the [C7] bound from the
+  # range of White seekers it can still hold, and [C8]-[C10] each from its
+  # cheapest members - is checked against the best key found so far; when
+  # it cannot be beaten, the whole branch is skipped. Every set skipped that
+  # way has a rough key at or above the best, which the set-by-set test
+  # would have skipped too (the best only improves), so the answer is the
+  # one the full enumeration gives. What it saves is visiting them: with
+  # every set of a profile on the same rough key, C(group, k) visits came
+  # down to the first set and one bound per branch (sweep 2026-11, AIN-1:
+  # 114 players, 19-38 s).
   defp best_in_profile(counts, groups, residents, lower, ctx) do
-    parts = Enum.zip(counts, groups)
-
-    result =
-      reduce_product(parts, [], nil, fn set, best ->
-        rough = {c7_bound(residents ++ set), c8(set, ctx), c9(set, ctx), c10(set, ctx)}
-
-        if best != nil and rough >= best.key do
-          {:cont, best}
-        else
-          bracket = Enum.map(residents ++ set, & &1.rank)
-          rest = Enum.map(lower -- set, & &1.rank)
-
-          if Graph.feasible?(bracket, ctx.field) and Graph.feasible?(rest, ctx.field) do
-            key = put_elem(rough, 0, c7(residents ++ set, ctx.field))
-            best = if best == nil or key < best.key, do: %{key: key, set: set}, else: best
-            # Nothing beats a bracket that denies nobody and floats nobody it
-            # should not; anything short of that may still be beaten later.
-            if key == {0, 0, 0, 0}, do: {:halt, best}, else: {:cont, best}
-          else
-            {:cont, best}
-          end
-        end
+    parts =
+      counts
+      |> Enum.zip(groups)
+      |> Enum.map(fn {count, {_score, members}} ->
+        {count, Enum.map(members, &{&1, weights(&1, ctx)})}
       end)
 
-    result && result.set
+    walk = %{
+      residents: residents,
+      lower: lower,
+      ctx: ctx,
+      size: length(residents) + Enum.sum(counts),
+      white_residents: Enum.count(residents, &(&1.colour == :white)),
+      later: later_bounds(parts)
+    }
+
+    {_, best} = walk_parts(parts, [], {0, 0, 0, 0}, nil, walk)
+    best && best.set
   end
 
-  defp reduce_product(parts, chosen, acc, fun) do
-    {_, acc} = product(parts, chosen, acc, fun)
-    acc
+  # Per player: {white seeker?, [C8], [C9], [C10]} contributions.
+  defp weights(p, ctx) do
+    max_up? = not ctx.last_round? and p.upfloats >= ctx.max_t
+
+    {if(p.colour == :white, do: 1, else: 0), if(max_up?, do: 1, else: 0),
+     if(max_up?, do: p.upfloats, else: 0),
+     if(not ctx.last_round? and p.upfloated_last?, do: 1, else: 0)}
   end
 
-  defp product([], chosen, acc, fun), do: fun.(chosen, acc)
-
-  defp product([{count, {_score, members}} | rest], chosen, acc, fun) do
-    Order.reduce_sets(members, count, {:cont, acc}, fn picked, {_, acc} ->
-      case product(rest, chosen ++ picked, acc, fun) do
-        {:halt, acc} -> {:halt, {:halt, acc}}
-        {:cont, acc} -> {:cont, {:cont, acc}}
-      end
+  # For each part, the bounds of the parts AFTER it, summed:
+  # {least whites, most whites, least C8, least C9, least C10}.
+  defp later_bounds(parts) do
+    parts
+    |> Enum.reverse()
+    |> Enum.map_reduce({0, 0, 0, 0, 0}, fn {count, members}, acc ->
+      {acc, add5(acc, part_bounds(members, count))}
     end)
+    |> elem(0)
+    |> Enum.reverse()
+  end
+
+  defp part_bounds(members, count) do
+    ws = Enum.map(members, fn {_, w} -> w end)
+    whites = Enum.count(ws, &(elem(&1, 0) == 1))
+
+    least = fn i ->
+      ws |> Enum.map(&elem(&1, i)) |> Enum.sort() |> Enum.take(count) |> Enum.sum()
+    end
+
+    {max(0, count - (length(ws) - whites)), min(count, whites), least.(1), least.(2), least.(3)}
+  end
+
+  defp add5({a, b, c, d, e}, {f, g, h, i, j}), do: {a + f, b + g, c + h, d + i, e + j}
+
+  defp walk_parts([], chosen, _sums, best, walk), do: leaf(Enum.reverse(chosen), best, walk)
+
+  defp walk_parts([{count, members} | rest], chosen, sums, best, walk) do
+    [later | later_rest] = walk.later
+
+    walk_group(members, length(members), count, rest, chosen, sums, best, later, %{
+      walk
+      | later: later_rest
+    })
+  end
+
+  defp walk_group(_members, _n, 0, rest, chosen, sums, best, _later, walk),
+    do: walk_parts(rest, chosen, sums, best, walk)
+
+  defp walk_group(_members, n, k, _rest, _chosen, _sums, best, _later, _walk) when n < k,
+    do: {:cont, best}
+
+  defp walk_group([{x, w} | more] = members, n, k, rest, chosen, sums, best, later, walk) do
+    if best != nil and bound(members, k, sums, later, walk) >= best.key do
+      {:cont, best}
+    else
+      case walk_group(more, n - 1, k - 1, rest, [x | chosen], add4(sums, w), best, later, walk) do
+        {:halt, best} -> {:halt, best}
+        {:cont, best} -> walk_group(more, n - 1, k, rest, chosen, sums, best, later, walk)
+      end
+    end
+  end
+
+  defp add4({a, b, c, d}, {e, f, g, h}), do: {a + e, b + f, c + g, d + h}
+
+  # The least rough key of any set completing `sums` with `k` of `members`
+  # and the later parts.
+  defp bound(members, k, {whites, c8, c9, c10}, later, walk) do
+    {lo, hi, l8, l9, l10} = add5(part_bounds(members, k), later)
+    base = walk.white_residents + whites
+    n = walk.size
+    # div(|2W - n|, 2) over W in base + lo .. base + hi: least at the W
+    # nearest n / 2.
+    w = (base + lo)..(base + hi) |> Enum.min_by(&abs(2 * &1 - n))
+    {div(abs(2 * w - n), 2), c8 + l8, c9 + l9, c10 + l10}
+  end
+
+  defp leaf(set, best, %{residents: residents, lower: lower, ctx: ctx}) do
+    rough = {c7_bound(residents ++ set), c8(set, ctx), c9(set, ctx), c10(set, ctx)}
+
+    if best != nil and rough >= best.key do
+      {:cont, best}
+    else
+      bracket = Enum.map(residents ++ set, & &1.rank)
+      rest = Enum.map(lower -- set, & &1.rank)
+
+      if Graph.feasible?(bracket, ctx.field) and Graph.feasible?(rest, ctx.field) do
+        key = put_elem(rough, 0, c7(residents ++ set, ctx.field))
+        best = if best == nil or key < best.key, do: %{key: key, set: set}, else: best
+        # Nothing beats a bracket that denies nobody and floats nobody it
+        # should not; anything short of that may still be beaten later.
+        if key == {0, 0, 0, 0}, do: {:halt, best}, else: {:cont, best}
+      else
+        {:cont, best}
+      end
+    end
   end
 
   @doc """
