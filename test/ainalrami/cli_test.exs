@@ -576,23 +576,53 @@ defmodule Ainalrami.CLITest do
     test "a tampered pairing is reported, and the exit code is nonzero" do
       players = self_paired_tournament(4)
 
-      # Swap two players' round-3 opponents so the recorded pairing is one
-      # this engine would not have produced.
-      [a, b | rest] = players
-      ga = Enum.at(a.games, 2)
-      gb = Enum.at(b.games, 2)
+      # Re-pair two of the round-3 games consistently (the two white players
+      # trade opponents, on both sides of each game), so the recorded pairing
+      # is a possible one that this engine would not have produced.
+      round3 = fn p -> Enum.at(p.games, 2) end
+      [w1, w2 | _] = Enum.filter(players, &(round3.(&1).colour == "w"))
+      b1 = round3.(w1).opponent_rank
+      b2 = round3.(w2).opponent_rank
+
+      swap = %{w1.rank => b2, b2 => w1.rank, w2.rank => b1, b1 => w2.rank}
 
       tampered =
-        [
-          %{a | games: List.replace_at(a.games, 2, %{ga | opponent_rank: gb.opponent_rank})},
-          %{b | games: List.replace_at(b.games, 2, %{gb | opponent_rank: ga.opponent_rank})}
-        ] ++ rest
+        Enum.map(players, fn p ->
+          case Map.fetch(swap, p.rank) do
+            {:ok, opp} ->
+              %{p | games: List.update_at(p.games, 2, &%{&1 | opponent_rank: opp})}
+
+            :error ->
+              p
+          end
+        end)
 
       path = write_trf(tampered)
       {out, code} = run_capturing(fn -> CLI.run([path, "-c"]) end)
 
       assert code == 1
       assert out =~ "round 3: DIFFERS"
+    end
+
+    test "a file whose opponent references do not point back at each other is refused" do
+      players = self_paired_tournament(4)
+
+      # Player 1 names a different round-3 opponent than that opponent names
+      # back: one line says 1 played X, X's line says X played someone else.
+      [a | rest] = players
+      ga = Enum.at(a.games, 2)
+      other = Enum.find(rest, &(&1.rank != ga.opponent_rank))
+
+      tampered = [
+        %{a | games: List.replace_at(a.games, 2, %{ga | opponent_rank: other.rank})} | rest
+      ]
+
+      path = write_trf(tampered)
+      {out, code} = run_capturing(fn -> CLI.run([path, "-c"]) end)
+
+      assert code != 0
+      assert out =~ "round 3"
+      assert out =~ "lists"
     end
 
     test "a player holding an arbiter-assigned bye is left out of the replayed pairing" do
