@@ -70,8 +70,10 @@ the whole remaining field. 3.4 and Article 4 share nothing but the reading.
 - [C5] maximises the upfloaters' scores taken in ascending order (open
   question 5: the article, not the 3.5.4 example).
 - [C6] minimises how many more upfloaters than the parity minimum the
-  following scoregroup (the highest score among the lower teams) would
-  need; 0 when every team of that score floated.
+  following scoregroup would need: the next score below the residents'
+  among every team of the round, the bye's included (since 2026-11-11;
+  before, the highest score among the lower teams); 0 when no team of
+  that score is left to pair.
 - [C7] minimises upfloaters that floated last round, before 3.5.4's order
   (open question 7); off in the last two rounds, as is [C10].
 - 3.6: least {C8, C10} (C8 first), then the smallest identifier. [C10]

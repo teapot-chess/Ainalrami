@@ -58,8 +58,13 @@ defmodule Ainalrami.TeamPairing.Team do
       record 330 is "one or both teams didn't show up". Whether a match
       forfeited "by decision" after games were played counts is left open
       (medium confidence that it does not).
+      Since 2026-11-11 a match where BOTH teams scored on a board by
+      forfeit counts as played even with no game over the board (both
+      turned up, each was short somewhere): a colour, a meeting, and no
+      forfeit win for either side.
     * `:floated_last_round?` - was a floater (1.5: played an opponent with a
-      different score) in the previous round. Read by [C7] and [C10], both
+      different score) in the previous round. Only a PLAYED match makes a
+      floater; a forfeited one does not, and a bye never did (2026-11-11). Read by [C7] and [C10], both
       of which stop applying in the last two rounds.
     * `:matches_played` - for the bye tie-break 3.4.3. Defaults to
       `length(colours)`; settable because a competition may count a

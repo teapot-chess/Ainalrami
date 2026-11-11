@@ -1872,8 +1872,15 @@ defmodule Ainalrami.Trf do
     end)
   end
 
-  # TRF26 `362`, `320`, `330` and `300`, when the tournament carries them.
+  # TRF26 `352`, `362`, `320`, `330` and `300`, when the tournament carries
+  # them.
   defp team_record_lines(t) do
+    colours =
+      case t[:board_colours] do
+        seq when is_binary(seq) and seq != "" -> ["352 " <> seq]
+        _ -> []
+      end
+
     points =
       case t[:team_point_system] do
         system when is_map(system) and map_size(system) > 0 ->
@@ -1942,7 +1949,7 @@ defmodule Ainalrami.Trf do
         |> render()
       end
 
-    points ++ pab ++ forfeits ++ orders
+    colours ++ points ++ pab ++ forfeits ++ orders
   end
 
   # A team with a number is a TRF26 `310` record (layout in parse/1's doc);
@@ -2320,7 +2327,9 @@ defmodule Ainalrami.Trf do
   `:nickname`, `:strength`, `:match_points`, `:game_points`, `:final_rank`,
   `:player_ranks`), and when a file has any `310` its `013` lines are
   ignored; `362` goes to `tournament[:team_point_system]` (`%{win:, draw:,
-  loss:}` plus `:pab`, `:absent`, `:unknown` when given), `320` to
+  loss:}` plus `:pab`, `:absent`, `:unknown` when given), `352` (the
+  boards' colour sequence, whose length is the board count) to
+  `[:board_colours]` as `"WBWB"`, `320` to
   `[:team_pab]`, `330` lines to `[:forfeited_matches]` and `300` lines
   (a team's board order in one match) to `[:board_orders]` (`%{round:,
   team:, opponent:, order: [starting rank, 0 for an empty board]}`).
@@ -2333,8 +2342,8 @@ defmodule Ainalrami.Trf do
   points 10-13, then the team given the bye in each round, 3 columns from
   15 every 4; `330` type 5-6, round 8-10, white team 12-14, black team
   16-18; `300` round 5-7, team 9-11, opponent 13-15, then the starting
-  ranks in board order, 4 columns from 17 every 5. `serialize/2` writes all
-  five back.
+  ranks in board order, 4 columns from 17 every 5; `352` the sequence
+  from column 5. `serialize/2` writes all six back.
   """
   def parse(text) do
     lines =
@@ -2412,6 +2421,9 @@ defmodule Ainalrami.Trf do
 
           "362" ->
             put_in(acc.tournament[:team_point_system], parse_362(line))
+
+          "352" ->
+            parse_352(acc, line)
 
           "132" ->
             put_in(acc.tournament[:round_dates], parse_round_dates(line))
@@ -4004,6 +4016,31 @@ defmodule Ainalrami.Trf do
       opponent: parse_int(read(line, {13, 15})),
       order: order
     }
+  end
+
+  # TRF26 `352`: the colours of a team's boards, one `W` or `B` per board
+  # from column 5 ("352 WBWBWB" - FIDE's example; Gacrux reads the same
+  # columns). Its length is the board count. Anything but a run of W and B
+  # is not read: the key is left out, as for a file without the record.
+  defp parse_352(acc, line) do
+    seq =
+      if byte_size(line) > 4,
+        do: line |> binary_part(4, byte_size(line) - 4) |> String.trim() |> String.upcase(),
+        else: ""
+
+    if seq =~ ~r/\A[WB]+\z/,
+      do: put_in(acc.tournament[:board_colours], seq),
+      else: acc
+  end
+
+  @doc """
+  The TRF26 `352` colour sequence for `boards` boards as this engine plays
+  them: White on the odd boards for the team with White on board 1
+  (C.04.6 1.6.1 reads a team's colour off board 1; the boards alternate
+  from it) - `"WBWB"` for four.
+  """
+  def board_colours(boards) when is_integer(boards) and boards >= 1 do
+    1..boards |> Enum.map_join(&if(rem(&1, 2) == 1, do: "W", else: "B"))
   end
 
   defp parse_330(line) do

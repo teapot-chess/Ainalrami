@@ -23,7 +23,10 @@ defmodule Ainalrami.TeamPairingValidationTest do
     * [C5] maximises the upfloaters' scores taken in ascending order
       (open question 5 - the article, not the 3.5.4 example);
     * [C6] minimises how many more upfloaters than the parity minimum the
-      following scoregroup's bracket would need;
+      following scoregroup's bracket would need - the following scoregroup
+      being the next score level below the residents' among the whole
+      round's field, and 0 when no team of it is left once the set floats
+      (2026-11-11);
     * [C7] minimises the upfloaters that floated last round, before 3.5.4's
       order (open question 7);
     * 3.6: least {C8, C10}, then the smallest identifier. Type A, and

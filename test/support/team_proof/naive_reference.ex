@@ -38,7 +38,10 @@ defmodule Ainalrami.TeamProof.NaiveReference do
          true <- ref_pairable?(rest) do
       {bracket_pairs, bracket_reasons} =
         rest
-        |> ref_brackets({last_two?, type, soft}, [])
+        |> ref_brackets(
+          {last_two?, type, soft, field |> Enum.map(& &1.match_points) |> Enum.uniq()},
+          []
+        )
         |> Enum.unzip()
 
       allocated =
@@ -149,7 +152,7 @@ defmodule Ainalrami.TeamProof.NaiveReference do
 
   defp ref_brackets([], _settings, acc), do: Enum.reverse(acc)
 
-  defp ref_brackets(remaining, {last_two?, type, soft} = settings, acc) do
+  defp ref_brackets(remaining, {last_two?, type, soft, levels} = settings, acc) do
     top = remaining |> Enum.map(& &1.match_points) |> Enum.max()
     {residents, lower} = Enum.split_with(remaining, &(&1.match_points == top))
 
@@ -168,7 +171,8 @@ defmodule Ainalrami.TeamProof.NaiveReference do
       legal
       |> Enum.filter(&({length(&1), c5(&1)} == best_c4_c5))
       |> Enum.map(fn set ->
-        {{c6(set, lower), c7(set, last_two?), set |> sort_353() |> Enum.map(& &1.tpn)}, set}
+        {{c6(set, lower, next_level(levels, top)), c7(set, last_two?),
+          set |> sort_353() |> Enum.map(& &1.tpn)}, set}
       end)
       |> Enum.sort()
 
@@ -208,10 +212,16 @@ defmodule Ainalrami.TeamProof.NaiveReference do
   defp c5(set), do: set |> Enum.map(& &1.match_points) |> Enum.sort() |> Enum.map(&(0 - &1))
 
   # [C6]: extra upfloaters (beyond parity) the following scoregroup needs.
-  defp c6(_set, []), do: 0
+  # The following scoregroup is the next score below the residents' among
+  # every team handed in for the round (the bye's included): 2.3.3's
+  # "became or are upfloaters" counts the teams earlier brackets took as
+  # still belonging to it, so when none of that score is left it is empty
+  # and [C6] is met - the look does not go one level further down.
+  defp next_level(levels, top), do: levels |> Enum.filter(&(&1 < top)) |> Enum.max(fn -> nil end)
 
-  defp c6(set, lower) do
-    following_score = lower |> Enum.map(& &1.match_points) |> Enum.max()
+  defp c6(_set, [], _following_score), do: 0
+
+  defp c6(set, lower, following_score) do
     {following, below} = Enum.split_with(lower -- set, &(&1.match_points == following_score))
 
     if following == [] do

@@ -78,9 +78,12 @@ defmodule Ainalrami.TeamReplay do
   order of a TRF26 `300` record for the match, when the file has one:
 
     * **a match** against the team whose players they met. It was *played*
-      when at least one board was played over the board; a match where
-      every board was forfeited, or a TRF26 `330` record with no board
-      records, was paired but not played (C.04.2 3.5: such teams "may be
+      when at least one board was played over the board, or when both
+      teams scored on a board by forfeit (both turned up) - the definition
+      lives in `Ainalrami.Tiebreaks.Team.from_trf/2` and is read from
+      there. A match where only one side scored, or neither, with no board
+      played, or a TRF26 `330` record with no board records, was paired but
+      not played (C.04.2 3.5: such teams "may be
       paired together in a future round", so it is not an opponent for
       [C1]). The team's colour is its board-1 player's (1.6.1), and a
       `330` record's white and black teams for a match with no boards.
@@ -92,8 +95,8 @@ defmodule Ainalrami.TeamReplay do
   Match and game points are `Ainalrami.Tiebreaks.Team.from_trf/2`'s, the
   same reading the standings check uses (`362`, `320`, `330`). A team
   "won a match by forfeit" ([C2]) when that reading makes it a forfeit win -
-  no board played and more game points, or a `330` record - OpenPairings'
-  reading of open question 6. A team whose players all hold an `F` has a
+  no board played and the opponent scored nothing, or a `330` record -
+  OpenPairings' reading of open question 6. A team whose players all hold an `F` has a
   full-point bye, which [C2] also bars from the pairing-allocated bye.
 
   ## Replaying a round (`check_round/4`)
@@ -104,8 +107,8 @@ defmodule Ainalrami.TeamReplay do
   `%Ainalrami.TeamPairing.Team{}`: points so far, opponents of played
   matches, board-1 colours of played matches, whether it had the bye or won
   a match by forfeit, and whether it floated in the previous round -
-  paired, played or not, against a team on a different primary score
-  (1.5). The round number and the file's `142` round count switch [C7],
+  PLAYED against a team on a different primary score (1.5; a forfeited
+  match floats nobody). The round number and the file's `142` round count switch [C7],
   [C10] and Type B's mild preferences off at the end, as the engine does.
 
   A round is compared in composition (who meets whom, who has the bye) and
@@ -498,12 +501,16 @@ defmodule Ainalrami.TeamReplay do
 
           points = event.teams[team].rounds[r]
 
+          record = read_round(rounds, team, r, team_of, declared, Enum.at(pab_by_round, r - 1))
+
           record =
-            read_round(rounds, team, r, team_of, declared, Enum.at(pab_by_round, r - 1))
-            |> Map.merge(%{
+            Map.merge(record, %{
               mp: points.mp * 1.0,
               gp: points.gp * 1.0,
-              forfeit_win?: points.kind == :forfeit_win
+              forfeit_win?: points.kind == :forfeit_win,
+              # Played or not is `Tiebreaks.Team.from_trf/2`'s to say (a board
+              # played, or both teams scoring by forfeit) - one definition.
+              played?: record.kind == :match and points.kind == :played
             })
 
           {r, record}
@@ -590,7 +597,6 @@ defmodule Ainalrami.TeamReplay do
           base
           | kind: :match,
             opponent: opponent,
-            played?: Enum.any?(met, fn {g, _board} -> g.kind == :played end),
             colour: Enum.find_value(met, &team_colour/1)
         }
     end
@@ -714,13 +720,15 @@ defmodule Ainalrami.TeamReplay do
 
   defp tidy(x), do: Float.round(x * 1.0, 6)
 
-  # 1.5: paired in `previous` against a team on a different score before
-  # it - the pairing floats a team, whether the match was then played.
+  # 1.5: PLAYED, in `previous`, against a team on a different score before
+  # it. A forfeited match makes nobody a floater (2026-11-11: 1.5 says
+  # "plays against", and the Basic Rules' "play against each other" is a
+  # game actually played); until then the pairing alone floated a team.
   defp floated?(_history, _team, previous, _mode) when previous < 1, do: false
 
   defp floated?(history, team, previous, mode) do
     case history[team][previous] do
-      %{kind: :match, opponent: other} when is_map_key(history, other) ->
+      %{kind: :match, played?: true, opponent: other} when is_map_key(history, other) ->
         key = if mode == :game_points, do: :gp, else: :mp
         score = fn t -> total(earlier(history[t], previous), key) end
         score.(team) != score.(other)
@@ -904,11 +912,16 @@ defmodule Ainalrami.TeamReplay do
   end
 
   @doc """
-  The number of boards a match has: the most players of one team who met
-  somebody in one round (`Ainalrami.Tiebreaks.Team.from_trf/2`'s count), or
-  nil when no match has been played yet.
+  The number of boards a match has: the file's TRF26 `352` colour sequence
+  when it has one, else the most players of one team who met somebody in
+  one round (`Ainalrami.Tiebreaks.Team.from_trf/2`'s count), or nil when
+  neither says.
   """
   def boards(parsed) do
+    Tiebreaks.Team.board_count(parsed.tournament) || boards_from_games(parsed)
+  end
+
+  defp boards_from_games(parsed) do
     {_rosters, team_of} = rosters(parsed)
 
     counts =

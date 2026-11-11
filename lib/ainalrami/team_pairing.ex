@@ -407,6 +407,10 @@ defmodule Ainalrami.TeamPairing do
 
     base = [
       field: field,
+      # The round's score levels, taken BEFORE the bye leaves the field:
+      # [C6]'s "following scoregroup" is the next of these below a bracket's
+      # residents, whoever is left of it (`c6_excess/5`).
+      score_levels: teams |> Enum.map(&Team.score(&1, mode)) |> Enum.uniq(),
       type: Keyword.get(opts, :type, :a),
       last_round?: last_round?,
       last_two_rounds?: last_two?,
@@ -684,7 +688,12 @@ defmodule Ainalrami.TeamPairing do
     2. **[C5]** - among the legal sets of that size, the best score profile
        (`c5_profile_key/2`, where open question 5 is isolated).
     3. **[C6]** - among those, the fewest extra upfloaters the following
-       scoregroup's bracket would need (`c6_excess/4`).
+       scoregroup's bracket would need (`c6_excess/5`). The following
+       scoregroup is the next score level below the residents in the
+       round's whole field (`base[:score_levels]`, which `pair_round/2`
+       fills in); nobody of that score left to pair means [C6] is met. A
+       direct caller that passes no `:score_levels` gets the levels of
+       `residents ++ lower`.
     4. **[C7]** - then the fewest upfloaters that floated last round
        (`c7_previous_floaters/2`, where open question 7 is isolated).
     5. **3.5.4** - then the first set in lexicographic TPN order.
@@ -843,7 +852,9 @@ defmodule Ainalrami.TeamPairing do
           true ->
             case legality(residents, lower, set, base) do
               :legal ->
-                key = {c6_excess(set, lower, mode, base), c7_previous_floaters(set, base)}
+                key =
+                  {c6_excess(set, residents, lower, mode, base), c7_previous_floaters(set, base)}
+
                 candidate = %{profile: profile, key: key, set: set, index: index}
                 rec = note_considered(rec, candidate, mode)
 
@@ -1215,7 +1226,7 @@ defmodule Ainalrami.TeamPairing do
   defp look_at(rec, profile, set, index, best, residents, lower, mode, base) do
     case legality(residents, lower, set, base) do
       :legal when profile == best.profile ->
-        key = {c6_excess(set, lower, mode, base), c7_previous_floaters(set, base)}
+        key = {c6_excess(set, residents, lower, mode, base), c7_previous_floaters(set, base)}
         candidate = %{profile: profile, key: key, set: set, index: index}
         rec = rec |> note_considered(candidate, mode) |> note_second(candidate)
         if key == {0, 0}, do: {:halt, rec}, else: {:cont, rec}
@@ -1285,22 +1296,40 @@ defmodule Ainalrami.TeamPairing do
   # "Unless all the teams in the following scoregroup became or are
   # upfloaters (thus this scoregroup is now empty), choose the set of
   # upfloaters so that criteria [C1], [C3] and [C4] ... are complied with in
-  # the bracket where this (not empty) scoregroup is paired." The following
-  # scoregroup is the highest score below the residents; what is left of it
-  # after this set floats up will be the residents of the next bracket. [C4]
-  # there is "the fewest upfloaters", so the look-ahead finds the fewest that
-  # give a bracket pairable under [C1] with everything below it still
-  # pairable ([C3]). Only [C1], [C3] and [C4] - not [C5]: the next bracket's
-  # upfloaters are not constrained by score for this question.
+  # the bracket where this (not empty) scoregroup is paired." What is left of
+  # the following scoregroup after this set floats up will be the residents
+  # of the next bracket. [C4] there is "the fewest upfloaters", so the
+  # look-ahead finds the fewest that give a bracket pairable under [C1] with
+  # everything below it still pairable ([C3]). Only [C1], [C3] and [C4] - not
+  # [C5]: the next bracket's upfloaters are not constrained by score for
+  # this question.
+  #
+  # WHICH scoregroup follows is fixed by score, not by who is left (reading
+  # of 2026-11-11, docs/conformance-c0406-teams.md): the highest score below
+  # the residents' among every team of the round's field - the team given
+  # the pairing-allocated bye included, absent teams not - carried in
+  # `base[:score_levels]`. 1.3.1 makes a scoregroup "all the teams with the
+  # same score", and 2.3.3's "became or are upfloaters" has no meaning
+  # unless the teams an EARLIER bracket floated still belong to it. So when
+  # no team of that score is left to pair - an earlier bracket took them,
+  # the bye did, or this set takes the rest - the scoregroup is empty and
+  # [C6] is complied with. The look does not move one level further down;
+  # until 2026-11-11 it did, taking the highest score among the teams still
+  # to pair. Mario Held's worked example skips [C6] the same way (round 7),
+  # and Gacrux reads it so.
+  #
+  # A caller of `select_upfloaters/4` that hands no levels gets the levels of
+  # the teams it names (residents and `lower`), which is the old reading and
+  # the right one when those teams are the whole field.
   #
   # Sets with the same [C5] profile take the same number of teams out of the
   # following scoregroup, so the parity minimum is the same for every set
   # this is compared across, and "excess over it" ranks exactly as "count".
-  defp c6_excess(_set, [], _mode, _base), do: 0
+  defp c6_excess(_set, _residents, [], _mode, _base), do: 0
 
-  defp c6_excess(set, lower, mode, base) do
+  defp c6_excess(set, residents, lower, mode, base) do
     remaining = without(lower, set)
-    following_score = lower |> Enum.map(&Team.score(&1, mode)) |> Enum.max()
+    following_score = following_score(residents, lower, mode, base)
     {following, below} = Enum.split_with(remaining, &(Team.score(&1, mode) == following_score))
 
     if following == [] do
@@ -1319,6 +1348,23 @@ defmodule Ainalrami.TeamPairing do
       # paired, so some count works; the fallback is unreachable and ranks
       # worst rather than crashing if it ever is not.
       div((needed || length(lower) + 1) - start, 2)
+    end
+  end
+
+  # The next score level strictly below the residents' (see `c6_excess/5`),
+  # or nil when there is none - then no team matches it and [C6] is met.
+  defp following_score(residents, lower, mode, base) do
+    top = residents |> Enum.map(&Team.score(&1, mode)) |> Enum.max(fn -> nil end)
+
+    levels =
+      Keyword.get_lazy(base, :score_levels, fn ->
+        Enum.map(residents ++ lower, &Team.score(&1, mode))
+      end)
+
+    case top do
+      # No residents (a direct caller's corner): the highest of `lower`.
+      nil -> Enum.max(levels, fn -> nil end)
+      top -> levels |> Enum.filter(&(&1 < top)) |> Enum.max(fn -> nil end)
     end
   end
 
