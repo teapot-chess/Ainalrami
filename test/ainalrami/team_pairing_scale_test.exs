@@ -27,6 +27,10 @@ defmodule Ainalrami.TeamPairingScaleTest do
   # reference only where it was EXHAUSTIVE - which, at up to fourteen teams
   # and the old default budgets, is nearly always.
   describe "Bracket.pair/2 is the pre-change walk wherever that walk was exhaustive" do
+    # 600 brackets against the old walk: about 20 s on a desk, over a minute
+    # on a loaded runner, where the default 60 s made it fail for no reason
+    # of its own.
+    @tag timeout: 300_000
     test "same pairs and criteria on generated brackets; the budgets are ignored" do
       :rand.seed(:exsss, {2026, 9, 16})
 
