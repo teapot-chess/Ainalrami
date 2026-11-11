@@ -821,3 +821,7 @@ a malformed `352` ignored. Mutation check: putting back the old [C6] level
 fails two A tests; letting a forfeited match float fails the B test (and
 one generated replay); dropping the "both scored" clause fails the C test
 and one B test.
+
+**Validation.** The whole-round test against the brute-force reference,
+both moved to these readings, on seeds 1-3,000,000: 12,393,746 rounds, 0
+failures, 0 errors ([validation.md](validation.md#team-swiss-pairings-c046)).

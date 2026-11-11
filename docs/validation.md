@@ -1915,6 +1915,7 @@ reading.
 |---|---|---|---|---|
 | whole rounds, 4-10 teams, Type A (2026-09-26) | brute-force whole-round reference | 1-250,000,000 | 1,032,949,115 | 0 failures, 0 errors |
 | whole rounds, 4-10 teams, Type A, 0.37.0 (2026-10-05) | the same reference | 250,000,001-860,000,000 | 2,520,496,171 | 0 failures, 0 errors |
+| whole rounds, 4-10 teams, Type A, 0.56.0 readings (2026-11-11) | the same reference, moved to the 2026-11-11 readings | 1-3,000,000 | 12,393,746 | 0 failures, 0 errors |
 | whole rounds, 4-10 teams, no colour preferences (2026-09-27) | the same reference, `type: :none` | 1-30,000 | 123,593 | 0 disagreements |
 | whole rounds, 11-80 teams (2026-09-25) | exact reference (min-cost matchings) | 1-2,000 | 11,980 | every round agrees, reasons included |
 
@@ -1933,6 +1934,13 @@ commit `d0f16e8`. A second run on 0.37.0 (2026-10-05, an 80-vCPU VM, 72
 workers, 10.8 hours) took the next 610,000,000 seeds, 250,000,001-860,000,000:
 2,520,496,171 team rounds, again with no failure and no error. Together:
 seeds 1-860,000,000, 3,553,445,286 team rounds.
+
+Those runs checked the readings of their day. 0.56.0 changed four of them
+([conformance-c0406-teams.md](conformance-c0406-teams.md), *Readings
+settled, 2026-11-11*), and the reference and the generator were moved with
+the engine, each separately; seeds 1-3,000,000 were then run again on the
+16-core VM (12 workers, about 17 minutes): 12,393,746 team rounds, 0
+failures, 0 errors.
 
 ### Large fields, 11-80 teams
 
