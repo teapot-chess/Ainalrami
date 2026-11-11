@@ -49,7 +49,10 @@ defmodule Ainalrami.TeamGenerator do
       a forfeit, `--` excepted), teams sitting a round out
       (`:absent_team_pct`: every player has a zero-point bye; in a round
       robin the match is then forfeited, `330`, its first boards the `-`),
-      players announced absent (`:absent_player_pct`: a zero-point bye,
+      teams withdrawing (`:withdraw_pct`, default 0, from round 2 on: the
+      chance per team per round, never below four teams left; a withdrawn
+      team sits out every later round the same way), players announced
+      absent (`:absent_player_pct`: a zero-point bye,
       the players below moving up a board, a reserve filling in - never so
       many that a team cannot fill its boards), and lineups out of roster
       order (`:out_of_order_pct`, with a `300` record);
@@ -114,7 +117,8 @@ defmodule Ainalrami.TeamGenerator do
       byes: %{},
       forfeits: [],
       orders: [],
-      pairings: %{}
+      pairings: %{},
+      withdrawn: MapSet.new()
     }
 
     {final, played} =
@@ -256,6 +260,7 @@ defmodule Ainalrami.TeamGenerator do
       board_forfeit_pct: pct.(:board_forfeit_pct, [0, 2, 5]),
       match_forfeit_pct: pct.(:match_forfeit_pct, [0, 3, 8]),
       absent_team_pct: pct.(:absent_team_pct, [0, 5, 10]),
+      withdraw_pct: opts |> Keyword.get(:withdraw_pct, 0) |> pct!(:withdraw_pct),
       absent_player_pct: pct.(:absent_player_pct, [0, 5, 15]),
       out_of_order_pct: pct.(:out_of_order_pct, [0, 10, 30]),
       tie_breaks: tie_breaks
@@ -308,7 +313,8 @@ defmodule Ainalrami.TeamGenerator do
   # ---- one round -------------------------------------------------------------
 
   defp play_round(st, r, ctx) do
-    absent_teams = draw_absent_teams(ctx)
+    st = draw_withdrawals(st, r, ctx)
+    absent_teams = draw_absent_teams(st, ctx)
     present = Enum.reject(1..ctx.teams, &(&1 in absent_teams))
     absent_players = draw_absent_players(present, ctx)
 
@@ -381,9 +387,26 @@ defmodule Ainalrami.TeamGenerator do
     end
   end
 
-  defp draw_absent_teams(ctx) do
+  # A withdrawn team sits out every round from its withdrawal on. Nothing is
+  # drawn unless `:withdraw_pct` asks for it, so every seed recorded before
+  # it existed still generates the bytes it did.
+  defp draw_withdrawals(st, r, %{withdraw_pct: pct} = ctx) when pct > 0 and r > 1 do
+    Enum.reduce(1..ctx.teams, st, fn t, st ->
+      left = ctx.teams - MapSet.size(st.withdrawn)
+
+      if not MapSet.member?(st.withdrawn, t) and left > 3 and :rand.uniform(100) <= pct,
+        do: %{st | withdrawn: MapSet.put(st.withdrawn, t)},
+        else: st
+    end)
+  end
+
+  defp draw_withdrawals(st, _r, _ctx), do: st
+
+  defp draw_absent_teams(st, ctx) do
     absent = for t <- 1..ctx.teams, :rand.uniform(100) <= ctx.absent_team_pct, do: t
-    if ctx.teams - length(absent) < 2, do: [], else: absent
+    withdrawn = MapSet.to_list(st.withdrawn)
+    absent = Enum.sort(Enum.uniq(absent ++ withdrawn))
+    if ctx.teams - length(absent) < 2, do: withdrawn, else: absent
   end
 
   # Announced absences, never so many that a team cannot fill its boards.

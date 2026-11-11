@@ -55,7 +55,19 @@ defmodule Ainalrami.Test.Gacrux do
       see `classify/4`
     * `{:error, {code, output}}` - anything else
   """
-  def pair(trf_text, round \\ nil) do
+  #
+  # `opts` exist for the team harness (`Ainalrami.TeamThreeWayTest`):
+  #
+  #   * `:method` - the `-m` value, `"dutch"` by default; `nil` leaves `-m`
+  #     out, so Gacrux takes the system from the file's `192` code, which
+  #     is how a C.04.6 file says type, primary score and secondary score
+  #     in one word;
+  #   * `:script` - the script run instead of `pairingchecker.py`, or a
+  #     list of it and its own leading arguments; it then takes the same
+  #     arguments. The team harness points it at a wrapper that replaces
+  #     Gacrux decisions in memory to name a reading;
+  #   * `:extra` - more arguments, after the round's.
+  def pair(trf_text, round \\ nil, opts \\ []) do
     dir = Path.join(System.tmp_dir!(), "ainalrami-gacrux-#{System.unique_integer([:positive])}")
     File.mkdir_p!(dir)
     input = Path.join(dir, "input.trf")
@@ -65,13 +77,14 @@ defmodule Ainalrami.Test.Gacrux do
       File.write!(input, trf_text)
 
       args =
-        [script_path(), "-i", input, "-o", output, "-p", "-dT", "-m", "dutch"] ++
-          round_args(round)
+        List.wrap(Keyword.get(opts, :script, script_path())) ++
+          ["-i", input, "-o", output, "-p", "-dT"] ++
+          tail_args(round, opts)
 
       case run(args) do
         {out, 0} ->
           case File.read(output) do
-            {:ok, text} -> classify(text, out, input, round)
+            {:ok, text} -> classify(text, out, input, {round, opts})
             {:error, _} -> {:no_valid_pairing, out}
           end
 
@@ -94,6 +107,16 @@ defmodule Ainalrami.Test.Gacrux do
   # Ainalrami-versus-Gacrux "disagreement" recorded before 2026-10-25 was
   # that artefact. `nil` keeps the old behaviour for callers that do not
   # know the round.
+  defp tail_args(round, opts) do
+    method =
+      case Keyword.get(opts, :method, "dutch") do
+        nil -> []
+        method -> ["-m", method]
+      end
+
+    method ++ round_args(round) ++ Keyword.get(opts, :extra, [])
+  end
+
   defp round_args(nil), do: []
 
   defp round_args(round) when is_integer(round) and round > 0,
@@ -244,10 +267,11 @@ defmodule Ainalrami.Test.Gacrux do
   # the exception reaches stderr. Anything unexpected here returns `nil` and
   # the caller falls back to the error page: a failure to explain a crash
   # must not become a second crash.
-  defp traceback(input, round) do
+  defp traceback(input, {round, opts}) do
     args =
-      [script_path(), "-i", input, "-o", input <> ".v.out", "-p", "-dT", "-m", "dutch", "-v"] ++
-        round_args(round)
+      List.wrap(Keyword.get(opts, :script, script_path())) ++
+        ["-i", input, "-o", input <> ".v.out"] ++
+        ["-p", "-dT", "-v"] ++ tail_args(round, opts)
 
     {out, _code} = run(args)
 

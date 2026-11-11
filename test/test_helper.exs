@@ -50,6 +50,11 @@ end
 
 exclude_tags = [:three_way | exclude_tags]
 
+# The C.04.6 team three-way (Ainalrami, Gacrux, chesspairing) needs both
+# external engines and runs on the VM. Run on demand with
+# `mix test --only team_three_way`.
+exclude_tags = [:team_three_way | exclude_tags]
+
 # The interop fixture is a 209-player tournament, and this engine's matcher
 # is roughly O(n^4) in the field size (see `docs/validation.md`'s
 # "Performance"): one round of it takes about eighty seconds, and the file
