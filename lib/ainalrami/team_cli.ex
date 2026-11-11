@@ -46,8 +46,8 @@ defmodule Ainalrami.TeamCLI do
   when the file has one, otherwise its free players in roster order - a
   player is not free when the file already records a bye for them in the
   round being paired - and the team with White on board 1 has White on
-  every odd board. The number of boards is the most any match of the file
-  had, or `--boards=N` (needed before round 1 has been played).
+  every odd board. The number of boards is the file's TRF26 `352` colour
+  sequence, else the most any match of the file had, or `--boards=N` (needed before round 1 has been played).
   """
 
   alias Ainalrami.{Log, TeamPairing, TeamReplay}

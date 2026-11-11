@@ -429,9 +429,17 @@ defmodule Ainalrami.TeamCLITest do
       assert out =~ "--lineups is for a team event"
     end
 
-    test "--lineups before any match needs --boards" do
+    test "--lineups before any match needs --boards, unless 352 says" do
       g = TeamGenerator.run(seed: 15, absent_team_pct: 0)
-      path = write(cut(g.text, 1))
+      with_352 = cut(g.text, 1)
+      assert with_352 =~ ~r/^352 [WB]+\r?$/m
+
+      # Record 352 states the board count, so nothing has to be inferred.
+      {out, 0} = cli([write(with_352), "-p", "--lineups", "-q"])
+      assert out =~ "\r\n1 1 "
+
+      # Without it, and with no match played yet, there is nothing to count.
+      path = write(String.replace(with_352, ~r/^352 [^\r\n]*\r?\n/m, ""))
       {out, 1} = cli([path, "-p", "--lineups"])
       assert out =~ "--boards=N"
 

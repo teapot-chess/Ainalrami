@@ -46,7 +46,7 @@ defmodule Ainalrami.TeamCertificate do
   and compares. Type B colour preferences are not certified (the input
   record is written, the certificate refuses with `{:unsupported, :type_b}`).
 
-  ## Weights (`c0406-2026-1`)
+  ## Weights (`c0406-2026-2`)
 
   Every digit is a non-negative count per edge; a digit's base is one more
   than the sum, over the vertices, of the largest value it takes on an edge
@@ -66,7 +66,7 @@ defmodule Ainalrami.TeamCertificate do
 
   @input_format "ainalrami-team-input"
   @format "ainalrami-team-certificate"
-  @weights "c0406-2026-1"
+  @weights "c0406-2026-2"
 
   @doc "The weight model this module writes duals for."
   def weights_version, do: @weights
@@ -441,7 +441,18 @@ defmodule Ainalrami.TeamCertificate do
     nl = length(lower)
     levels = lower |> Enum.map(&ctx.teams[&1].score) |> Enum.uniq() |> Enum.sort()
     level = levels |> Enum.with_index() |> Map.new()
-    following = List.last(levels)
+
+    # [C6]'s following scoregroup: the next score below the residents' among
+    # EVERY team of the round (the bye's included), not among those left -
+    # when no team of it is left, no edge carries `u` and [C6] is met.
+    top = ctx.teams[hd(residents)].score
+
+    following =
+      ctx.teams
+      |> Map.values()
+      |> Enum.map(& &1.score)
+      |> Enum.filter(&(&1 < top))
+      |> Enum.max(fn -> nil end)
 
     place =
       lower

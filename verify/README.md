@@ -225,7 +225,7 @@ optional `from`/`to` rounds), and per team the fields of
 `Ainalrami.TeamPairing.Team`. `output.txt` is the pairing list: a count
 line, `white black` per match, `tpn 0` for the bye. The certificate is
 written by the engine's `Ainalrami.TeamCertificate.certify/3` (format
-`ainalrami-team-certificate`, version 1, weights `c0406-2026-1`); its duals
+`ainalrami-team-certificate`, version 1, weights `c0406-2026-2`); its duals
 are found with the engine's matcher, and `team-check` decides alone
 whether they prove anything.
 
@@ -253,8 +253,12 @@ the primal, so `team-check` needs no search. It verifies:
     first: `k` 1 for resident-lower ([C4]); one `c5` digit per lower score
     level, lowest level first, 1 for resident-lower on that level ([C5]);
     `u` 1 for two lower teams of which exactly one has the following
-    score ([C6]); `c7` 1 for resident-lower when the lower team floated
-    last round, 0 in the last two rounds ([C7]); `pos` `2^L - 2^(L-p)`
+    score ([C6]) - the next score below the residents' among ALL the
+    round's teams, the bye's included, so no pair carries it once no team
+    of that score is left (weights `c0406-2026-2`, 2026-11-11; `-1` took
+    the highest score among the teams still to pair); `c7` 1 for
+    resident-lower when the lower team floated last round, 0 in the last
+    two rounds ([C7]); `pos` `2^L - 2^(L-p)`
     for resident-lower, `p` the lower team's place by (score desc, TPN)
     (3.5.4). The optimum fixes the upfloater set uniquely.
   * **3.6 top set**, over the bracket in TPN order: `c8` 1 when both teams

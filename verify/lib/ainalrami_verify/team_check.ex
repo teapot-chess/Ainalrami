@@ -41,7 +41,7 @@ defmodule AinalramiVerify.TeamCheck do
   alias AinalramiVerify.Certificate
 
   @format "ainalrami-team-certificate"
-  @weights "c0406-2026-1"
+  @weights "c0406-2026-2"
 
   @doc "The weight model this checker computes."
   def weights_version, do: @weights
@@ -473,7 +473,7 @@ defmodule AinalramiVerify.TeamCheck do
   end
 
   # ---------------------------------------------------------------------
-  # Weights (c0406-2026-1) - README, "Part 4"
+  # Weights (c0406-2026-2) - README, "Part 4"
   # ---------------------------------------------------------------------
 
   defp upfloat_weights(ctx, residents, lower) do
@@ -481,7 +481,18 @@ defmodule AinalramiVerify.TeamCheck do
     nl = length(lower)
     levels = lower |> Enum.map(&ctx.teams[&1].primary) |> Enum.uniq() |> Enum.sort()
     level = levels |> Enum.with_index() |> Map.new()
-    following = List.last(levels)
+
+    # [C6]'s following scoregroup: the next score below the residents' among
+    # EVERY team of the round (the bye's included), not among those left -
+    # when no team of it is left, no edge carries `u` and [C6] is met.
+    top = ctx.teams[hd(residents)].primary
+
+    following =
+      ctx.teams
+      |> Map.values()
+      |> Enum.map(& &1.primary)
+      |> Enum.filter(&(&1 < top))
+      |> Enum.max(fn -> nil end)
 
     place =
       lower

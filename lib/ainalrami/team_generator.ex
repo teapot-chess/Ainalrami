@@ -5,7 +5,8 @@ defmodule Ainalrami.TeamGenerator do
 
   Builds random teams, then plays the event forward board by board and
   writes it as a TRF26 file: `310` teams with their rosters (board order),
-  `001` players with every board game, `362` the match-point system
+  `001` players with every board game, `352` the boards' colours (and so
+  their count), `362` the match-point system
   (`W`/`D`/`L`, `P` for the pairing-allocated bye, `A` for a match lost by
   forfeit), `320` the bye teams, `330` forfeited matches, `300` boards
   played out of roster order, `192` the system, `152` the initial colour,
@@ -108,6 +109,7 @@ defmodule Ainalrami.TeamGenerator do
       had_pab: MapSet.new(),
       won_by_forfeit: MapSet.new(),
       floated: MapSet.new(),
+      played_now: MapSet.new(),
       arrived: MapSet.new(),
       byes: %{},
       forfeits: [],
@@ -320,12 +322,10 @@ defmodule Ainalrami.TeamGenerator do
             else: Enum.reject(ctx.rosters[t], &(&1 in absent_players))
         end
 
-        floated =
-          for {a, b} <- matches,
-              score(st, a, ctx) != score(st, b, ctx),
-              t <- [a, b],
-              into: MapSet.new(),
-              do: t
+        # The scores the round was paired on: 1.5 compares them.
+        before = Map.new(matches |> Enum.flat_map(&Tuple.to_list/1), &{&1, score(st, &1, ctx)})
+
+        st = %{st | played_now: MapSet.new()}
 
         {st, lineups} =
           Enum.reduce(matches, {st, %{}}, fn {a, b}, {st, lineups} ->
@@ -334,6 +334,16 @@ defmodule Ainalrami.TeamGenerator do
           end)
 
         {st, lineups} = give_bye(st, r, bye, free, lineups, ctx)
+
+        # 1.5: a floater PLAYED an opponent on a different score. A match
+        # forfeited as a whole floats nobody, however far apart the scores.
+        floated =
+          for {a, b} <- matches,
+              MapSet.member?(st.played_now, a),
+              before[a] != before[b],
+              t <- [a, b],
+              into: MapSet.new(),
+              do: t
 
         # A team out of the round's pairing scores a zero-point bye's match
         # points (`Tiebreaks.Team.from_trf/2`'s reading); in a round robin
@@ -600,10 +610,12 @@ defmodule Ainalrami.TeamGenerator do
 
     p = ctx.points
 
-    # `Tiebreaks.Team.from_trf/2`: a match with a board played is scored on
-    # game points; one with none is a forfeit won by the side with more
-    # game points, a double forfeit when neither scored, and a drawn match
-    # (not a forfeit) when they are level on something.
+    # `Tiebreaks.Team.from_trf/2`: a match is PLAYED when a board was played
+    # over the board or both teams scored on a board by forfeit (both turned
+    # up), and is scored on game points. Otherwise it is a forfeit won by the
+    # side that scored, a double forfeit when neither did.
+    played? = played? or (pa > 0 and pb > 0)
+
     {ma, mb, winner} =
       cond do
         played? and pa > pb -> {p.win, p.loss, nil}
@@ -611,8 +623,7 @@ defmodule Ainalrami.TeamGenerator do
         played? -> {p.draw, p.draw, nil}
         pa > pb -> {p.win, p.forfeit, a}
         pa < pb -> {p.forfeit, p.win, b}
-        pa == 0 -> {p.forfeit, p.forfeit, nil}
-        true -> {p.draw, p.draw, nil}
+        true -> {p.forfeit, p.forfeit, nil}
       end
 
     st = %{
@@ -628,7 +639,8 @@ defmodule Ainalrami.TeamGenerator do
       if played? do
         %{
           st
-          | opponents:
+          | played_now: st.played_now |> MapSet.put(a) |> MapSet.put(b),
+            opponents:
               st.opponents |> Map.update!(a, &(&1 ++ [b])) |> Map.update!(b, &(&1 ++ [a])),
             colours:
               st.colours |> Map.update!(a, &(&1 ++ [:white])) |> Map.update!(b, &(&1 ++ [:black]))
@@ -717,6 +729,9 @@ defmodule Ainalrami.TeamGenerator do
         type_code: type_code(ctx),
         number_of_rounds: ctx.planned,
         match_format: if(ctx.match_format?, do: true),
+        # TRF26 `352`: the board count, stated rather than left to a reader
+        # to infer from the games (a round of forfeits has none to count).
+        board_colours: Trf.board_colours(ctx.boards),
         team_point_system: %{
           win: p.win,
           draw: p.draw,
