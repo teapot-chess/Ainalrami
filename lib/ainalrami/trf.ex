@@ -1872,8 +1872,15 @@ defmodule Ainalrami.Trf do
     end)
   end
 
-  # TRF26 `362`, `320`, `330` and `300`, when the tournament carries them.
+  # TRF26 `352`, `362`, `320`, `330` and `300`, when the tournament carries
+  # them.
   defp team_record_lines(t) do
+    colours =
+      case t[:board_colours] do
+        seq when is_binary(seq) and seq != "" -> ["352 " <> seq]
+        _ -> []
+      end
+
     points =
       case t[:team_point_system] do
         system when is_map(system) and map_size(system) > 0 ->
@@ -1942,7 +1949,7 @@ defmodule Ainalrami.Trf do
         |> render()
       end
 
-    points ++ pab ++ forfeits ++ orders
+    colours ++ points ++ pab ++ forfeits ++ orders
   end
 
   # A team with a number is a TRF26 `310` record (layout in parse/1's doc);
@@ -2230,10 +2237,37 @@ defmodule Ainalrami.Trf do
               "#{inspect(result)} - opponentless games must use a bye code (F/H/Z/U)"
 
       result in @opposed_codes ->
+        if opts[:require_mutual], do: check_mutual!(player, round, game, by_rank)
         validate_playing_pair!(player, round, game, by_rank, result)
 
       true ->
         :ok
+    end
+  end
+
+  # `parse/1` always holds the whole roster, so an opponent that resolves to a
+  # real player whose own line for that round names someone else (or nobody)
+  # is a history that cannot be true: two players cannot both have beaten the
+  # same third one. A reference to a rank not in the file stays tolerated.
+  defp check_mutual!(player, round, game, by_rank) do
+    with opp_rank when not is_nil(opp_rank) <- game[:opponent_rank],
+         opponent when not is_nil(opponent) <- Map.get(by_rank, opp_rank) do
+      back = Enum.at(opponent[:games] || [], round - 1)
+
+      unless back && back[:opponent_rank] == player[:rank] do
+        listed =
+          case back && back[:opponent_rank] do
+            nil -> "nobody"
+            rank -> to_string(rank)
+          end
+
+        raise ValidationError,
+          message:
+            "round #{round}: #{player_label(player)} lists #{opp_rank} as opponent, " <>
+              "but #{opp_rank} lists #{listed}"
+      end
+    else
+      _ -> :ok
     end
   end
 
@@ -2293,7 +2327,9 @@ defmodule Ainalrami.Trf do
   `:nickname`, `:strength`, `:match_points`, `:game_points`, `:final_rank`,
   `:player_ranks`), and when a file has any `310` its `013` lines are
   ignored; `362` goes to `tournament[:team_point_system]` (`%{win:, draw:,
-  loss:}` plus `:pab`, `:absent`, `:unknown` when given), `320` to
+  loss:}` plus `:pab`, `:absent`, `:unknown` when given), `352` (the
+  boards' colour sequence, whose length is the board count) to
+  `[:board_colours]` as `"WBWB"`, `320` to
   `[:team_pab]`, `330` lines to `[:forfeited_matches]` and `300` lines
   (a team's board order in one match) to `[:board_orders]` (`%{round:,
   team:, opponent:, order: [starting rank, 0 for an empty board]}`).
@@ -2306,8 +2342,8 @@ defmodule Ainalrami.Trf do
   points 10-13, then the team given the bye in each round, 3 columns from
   15 every 4; `330` type 5-6, round 8-10, white team 12-14, black team
   16-18; `300` round 5-7, team 9-11, opponent 13-15, then the starting
-  ranks in board order, 4 columns from 17 every 5. `serialize/2` writes all
-  five back.
+  ranks in board order, 4 columns from 17 every 5; `352` the sequence
+  from column 5. `serialize/2` writes all six back.
   """
   def parse(text) do
     lines =
@@ -2375,14 +2411,19 @@ defmodule Ainalrami.Trf do
           "320" ->
             put_in(acc.tournament[:team_pab], parse_320(line))
 
+          # Prepended and reversed below, as `001` is: `++` here made a
+          # file of 32,000 `300` lines take 13 s (sweep 2026-11, AIN-4).
           "330" ->
-            update_in(acc.tournament[:forfeited_matches], &((&1 || []) ++ [parse_330(line)]))
+            update_in(acc.tournament[:forfeited_matches], &[parse_330(line) | &1 || []])
 
           "300" ->
-            update_in(acc.tournament[:board_orders], &((&1 || []) ++ [parse_300(line)]))
+            update_in(acc.tournament[:board_orders], &[parse_300(line) | &1 || []])
 
           "362" ->
             put_in(acc.tournament[:team_point_system], parse_362(line))
+
+          "352" ->
+            parse_352(acc, line)
 
           "132" ->
             put_in(acc.tournament[:round_dates], parse_round_dates(line))
@@ -2438,18 +2479,27 @@ defmodule Ainalrami.Trf do
     # above); every other key keeps file order as it always did.
     result = %{result | players: Enum.reverse(result.players), teams: Enum.reverse(result.teams)}
 
+    result =
+      Enum.reduce([:forfeited_matches, :board_orders], result, fn key, result ->
+        case result.tournament do
+          %{^key => list} -> put_in(result.tournament[key], Enum.reverse(list))
+          _ -> result
+        end
+      end)
+
     # A file with TRF26 `310` team records is read from them, and its `013`
     # lines (if any, written for older readers) are then ignored - the same
     # precedence TieBreakServer gives them (`trf2json.py`, `read_all_lines`).
     result =
       case Map.pop(result, :teams_310) do
         {nil, result} -> result
-        {teams, result} -> %{result | teams: Enum.reverse(teams)}
+        {teams, result} -> %{result | teams: teams |> Enum.reverse() |> check_team_numbers!()}
       end
 
     validate_games!(result.players,
       allow_dangling_playing_code: true,
-      allow_unknown_result: true
+      allow_unknown_result: true,
+      require_mutual: true
     )
 
     # The round about to be paired, counted once for both of the records
@@ -3704,7 +3754,7 @@ defmodule Ainalrami.Trf do
 
   defp parse_player_line(line) do
     %{
-      rank: parse_int(read(line, @player_cols.starting_rank)),
+      rank: starting_rank!(line),
       sex: line |> read(@player_cols.sex) |> String.downcase(),
       title: read(line, @player_cols.title),
       name: read(line, @player_cols.name),
@@ -3716,6 +3766,24 @@ defmodule Ainalrami.Trf do
       final_rank: parse_int(read(line, @player_cols.rank)),
       games: parse_games(line)
     }
+  end
+
+  # TRF's starting rank is four columns, 1..9999. `0` is the bye marker of
+  # the pairing output, so a player ranked 0 was paired and printed as
+  # `0 1` - a bye for player 1, to anyone reading it - and a negative or
+  # blank rank went on until something downstream tripped over it (sweep
+  # 2026-11, AIN-3).
+  defp starting_rank!(line) do
+    raw = read(line, @player_cols.starting_rank)
+
+    case Integer.parse(raw) do
+      {rank, ""} when rank in 1..9999 ->
+        rank
+
+      _ ->
+        raise ValidationError,
+          message: "001: starting rank must be 1..9999, got #{inspect(raw)}: #{String.trim(line)}"
+    end
   end
 
   # Stops on where the line's real content actually ends, not on the first
@@ -3841,6 +3909,34 @@ defmodule Ainalrami.Trf do
     {base, base + 3}
   end
 
+  # C.04.6 1.1.1: teams are numbered 1..N, each once. A `310` team numbered
+  # 0 was written out as "team 2 vs team 0" - a bye, to every reader - and
+  # two teams on one number left one roster unread, its players on no team
+  # (sweep 2026-11, AIN-6). A blank number keeps the file-order fallback.
+  defp check_team_numbers!(teams) do
+    Enum.reduce(teams, MapSet.new(), fn team, seen ->
+      number = team[:number]
+
+      cond do
+        is_nil(number) ->
+          seen
+
+        number < 1 ->
+          raise ValidationError,
+            message: "310 #{inspect(team.name)}: team number must be 1 or more, got #{number}"
+
+        MapSet.member?(seen, number) ->
+          raise ValidationError,
+            message: "310 #{inspect(team.name)}: team number #{number} is already another team's"
+
+        true ->
+          MapSet.put(seen, number)
+      end
+    end)
+
+    teams
+  end
+
   defp parse_310(line) do
     ranks =
       Stream.iterate(1, &(&1 + 1))
@@ -3920,6 +4016,31 @@ defmodule Ainalrami.Trf do
       opponent: parse_int(read(line, {13, 15})),
       order: order
     }
+  end
+
+  # TRF26 `352`: the colours of a team's boards, one `W` or `B` per board
+  # from column 5 ("352 WBWBWB" - FIDE's example; Gacrux reads the same
+  # columns). Its length is the board count. Anything but a run of W and B
+  # is not read: the key is left out, as for a file without the record.
+  defp parse_352(acc, line) do
+    seq =
+      if byte_size(line) > 4,
+        do: line |> binary_part(4, byte_size(line) - 4) |> String.trim() |> String.upcase(),
+        else: ""
+
+    if seq =~ ~r/\A[WB]+\z/,
+      do: put_in(acc.tournament[:board_colours], seq),
+      else: acc
+  end
+
+  @doc """
+  The TRF26 `352` colour sequence for `boards` boards as this engine plays
+  them: White on the odd boards for the team with White on board 1
+  (C.04.6 1.6.1 reads a team's colour off board 1; the boards alternate
+  from it) - `"WBWB"` for four.
+  """
+  def board_colours(boards) when is_integer(boards) and boards >= 1 do
+    1..boards |> Enum.map_join(&if(rem(&1, 2) == 1, do: "W", else: "B"))
   end
 
   defp parse_330(line) do

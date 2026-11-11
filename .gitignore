@@ -61,3 +61,8 @@ tools/bbp_reverse_dumps/
 
 # Dialyzer PLTs (mix dialyzer), rebuilt on demand.
 /priv/plts/
+
+# ExUnit's `@tag :tmp_dir` folders (tmp/<Module>/<test name>-<hash>/). One
+# was committed by accident, and its 260+ character path made a git
+# dependency on this repo fail to check out on Windows (sweep 2026-11, AIN-5).
+/tmp/Ainalrami.*/

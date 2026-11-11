@@ -5,7 +5,8 @@ defmodule Ainalrami.TeamGenerator do
 
   Builds random teams, then plays the event forward board by board and
   writes it as a TRF26 file: `310` teams with their rosters (board order),
-  `001` players with every board game, `362` the match-point system
+  `001` players with every board game, `352` the boards' colours (and so
+  their count), `362` the match-point system
   (`W`/`D`/`L`, `P` for the pairing-allocated bye, `A` for a match lost by
   forfeit), `320` the bye teams, `330` forfeited matches, `300` boards
   played out of roster order, `192` the system, `152` the initial colour,
@@ -44,12 +45,14 @@ defmodule Ainalrami.TeamGenerator do
       forfeit's (`:forfeit_match_points`, default a loss's);
     * results (by the rating table, `:draw_rate` default 0.3), boards
       forfeited (`:board_forfeit_pct`), whole matches not turned up for
-      (`:match_forfeit_pct` - board by board or as a `330` with no boards),
-      teams sitting a round out (`:absent_team_pct`: every player has a
-      zero-point bye; in a round robin the match is then forfeited, `330`),
+      (`:match_forfeit_pct` - board by board, or as a `330` with every board
+      a forfeit, `--` excepted), teams sitting a round out
+      (`:absent_team_pct`: every player has a zero-point bye; in a round
+      robin the match is then forfeited, `330`, its first boards the `-`),
       teams withdrawing (`:withdraw_pct`, default 0, from round 2 on: the
       chance per team per round, never below four teams left; a withdrawn
-      team sits out every later round the same way), players announced absent (`:absent_player_pct`: a zero-point bye,
+      team sits out every later round the same way), players announced
+      absent (`:absent_player_pct`: a zero-point bye,
       the players below moving up a board, a reserve filling in - never so
       many that a team cannot fill its boards), and lineups out of roster
       order (`:out_of_order_pct`, with a `300` record);
@@ -109,6 +112,7 @@ defmodule Ainalrami.TeamGenerator do
       had_pab: MapSet.new(),
       won_by_forfeit: MapSet.new(),
       floated: MapSet.new(),
+      played_now: MapSet.new(),
       arrived: MapSet.new(),
       byes: %{},
       forfeits: [],
@@ -324,12 +328,10 @@ defmodule Ainalrami.TeamGenerator do
             else: Enum.reject(ctx.rosters[t], &(&1 in absent_players))
         end
 
-        floated =
-          for {a, b} <- matches,
-              score(st, a, ctx) != score(st, b, ctx),
-              t <- [a, b],
-              into: MapSet.new(),
-              do: t
+        # The scores the round was paired on: 1.5 compares them.
+        before = Map.new(matches |> Enum.flat_map(&Tuple.to_list/1), &{&1, score(st, &1, ctx)})
+
+        st = %{st | played_now: MapSet.new()}
 
         {st, lineups} =
           Enum.reduce(matches, {st, %{}}, fn {a, b}, {st, lineups} ->
@@ -338,6 +340,16 @@ defmodule Ainalrami.TeamGenerator do
           end)
 
         {st, lineups} = give_bye(st, r, bye, free, lineups, ctx)
+
+        # 1.5: a floater PLAYED an opponent on a different score. A match
+        # forfeited as a whole floats nobody, however far apart the scores.
+        floated =
+          for {a, b} <- matches,
+              MapSet.member?(st.played_now, a),
+              before[a] != before[b],
+              t <- [a, b],
+              into: MapSet.new(),
+              do: t
 
         # A team out of the round's pairing scores a zero-point bye's match
         # points (`Tiebreaks.Team.from_trf/2`'s reading); in a round robin
@@ -514,10 +526,24 @@ defmodule Ainalrami.TeamGenerator do
     end
   end
 
-  # A `330` record and no board records: the winner a win's match points
-  # and a win on every board, the loser (both, in a double forfeit) the
-  # forfeit's match points and nothing - `Tiebreaks.Team.from_trf/2`'s
-  # reading.
+  # A `330` record: the winner a win's match points and a win on every
+  # board, the loser (both, in a double forfeit) the forfeit's match points
+  # and nothing - `Tiebreaks.Team.from_trf/2`'s reading.
+  #
+  # A one-sided forfeit (`+-`/`-+`) also goes on the players' lines, board
+  # by board: the winners `+` against the board's player of the absent
+  # team, who gets the `-` (TRF-2026, record 330, Notes 1 and 2 - XXXX "a
+  # player of the absent team", C `w`/`b`, and the matching forfeit loss on
+  # his line). Gacrux and anybody else who adds up a team's game points
+  # from its players' lines then sees the forfeit wins Mario Held's TPS
+  # example scores `0F-4F`; with the `330` alone they saw nothing, and the
+  # winners of a forfeited match had no game points. A team sitting the
+  # round out seated nobody, so its roster's first boards stand in. No
+  # board is played, so the reader still calls it a forfeited match.
+  #
+  # A double forfeit stays a bare `330 --`: neither team showed up, and by
+  # the record's own definition a team that shows up has its `001` records
+  # updated.
   defp declare_forfeit(st, r, a, b, whole, la, lb, ctx) do
     type = %{white: "+-", black: "-+", none: "--"}[whole]
     p = ctx.points
@@ -530,9 +556,17 @@ defmodule Ainalrami.TeamGenerator do
         :none -> {p.forfeit, 0.0, p.forfeit, 0.0}
       end
 
+    games =
+      if whole == :none do
+        st.games
+      else
+        forfeit_boards(st.games, r, whole, nominal(la, a, ctx), nominal(lb, b, ctx))
+      end
+
     st = %{
       st
-      | forfeits: [%{type: type, round: r, white: a, black: b} | st.forfeits],
+      | games: games,
+        forfeits: [%{type: type, round: r, white: a, black: b} | st.forfeits],
         mp: st.mp |> Map.update!(a, &(&1 + ma)) |> Map.update!(b, &(&1 + mb)),
         gp: st.gp |> Map.update!(a, &(&1 + ga)) |> Map.update!(b, &(&1 + gb)),
         won_by_forfeit:
@@ -544,6 +578,29 @@ defmodule Ainalrami.TeamGenerator do
     }
 
     {st, la, lb}
+  end
+
+  # The boards a forfeited match is written on: the team's line-up, or for
+  # a team that seated nobody, the first boards of its roster.
+  defp nominal([], team, ctx), do: seat(ctx.rosters[team], ctx)
+  defp nominal(lineup, _team, _ctx), do: lineup
+
+  # Board k: the first team's player against the second's, White on the
+  # odd boards for the first team (C.04.6 1.6.1), `+` for the winners and
+  # `-` for the side that did not turn up.
+  defp forfeit_boards(games, r, whole, la, lb) do
+    {ra, rb} = board_result(whole, nil, nil, nil)
+
+    la
+    |> Enum.zip(lb)
+    |> Enum.with_index(1)
+    |> Enum.reduce(games, fn {{x, y}, board}, games ->
+      x_white? = rem(board, 2) == 1
+
+      games
+      |> put_in([x, r], {y, if(x_white?, do: "w", else: "b"), ra})
+      |> put_in([y, r], {x, if(x_white?, do: "b", else: "w"), rb})
+    end)
   end
 
   defp play_boards(st, r, a, b, whole, la, lb, ctx) do
@@ -576,10 +633,12 @@ defmodule Ainalrami.TeamGenerator do
 
     p = ctx.points
 
-    # `Tiebreaks.Team.from_trf/2`: a match with a board played is scored on
-    # game points; one with none is a forfeit won by the side with more
-    # game points, a double forfeit when neither scored, and a drawn match
-    # (not a forfeit) when they are level on something.
+    # `Tiebreaks.Team.from_trf/2`: a match is PLAYED when a board was played
+    # over the board or both teams scored on a board by forfeit (both turned
+    # up), and is scored on game points. Otherwise it is a forfeit won by the
+    # side that scored, a double forfeit when neither did.
+    played? = played? or (pa > 0 and pb > 0)
+
     {ma, mb, winner} =
       cond do
         played? and pa > pb -> {p.win, p.loss, nil}
@@ -587,8 +646,7 @@ defmodule Ainalrami.TeamGenerator do
         played? -> {p.draw, p.draw, nil}
         pa > pb -> {p.win, p.forfeit, a}
         pa < pb -> {p.forfeit, p.win, b}
-        pa == 0 -> {p.forfeit, p.forfeit, nil}
-        true -> {p.draw, p.draw, nil}
+        true -> {p.forfeit, p.forfeit, nil}
       end
 
     st = %{
@@ -604,7 +662,8 @@ defmodule Ainalrami.TeamGenerator do
       if played? do
         %{
           st
-          | opponents:
+          | played_now: st.played_now |> MapSet.put(a) |> MapSet.put(b),
+            opponents:
               st.opponents |> Map.update!(a, &(&1 ++ [b])) |> Map.update!(b, &(&1 ++ [a])),
             colours:
               st.colours |> Map.update!(a, &(&1 ++ [:white])) |> Map.update!(b, &(&1 ++ [:black]))
@@ -693,6 +752,9 @@ defmodule Ainalrami.TeamGenerator do
         type_code: type_code(ctx),
         number_of_rounds: ctx.planned,
         match_format: if(ctx.match_format?, do: true),
+        # TRF26 `352`: the board count, stated rather than left to a reader
+        # to infer from the games (a round of forfeits has none to count).
+        board_colours: Trf.board_colours(ctx.boards),
         team_point_system: %{
           win: p.win,
           draw: p.draw,

@@ -1,5 +1,10 @@
 # Ainalrami
 
+> **Licence: reference source only.** Copyright 2026 Jorian Burssens. This code
+> is published under the [Microsoft Reference Source License (Ms-RSL)](LICENSE):
+> you may read it. You may not run, copy, modify or distribute it. See
+> [Licence](#licence).
+
 A FIDE Swiss pairing engine - the Dutch system, and now Dubov, Burstein and Lim - written in
 Elixir. No JVM, no external binary, no runtime dependencies.
 
@@ -1240,7 +1245,7 @@ harness at them and how to run the large fuzz axes.
 ## Relationship to OpenPairings
 
 Ainalrami is the sibling project to
-[OpenPairings](https://github.com/teapot-chess/openpairings), an
+[OpenPairings](https://pairings.cloud), an
 Elixir/Phoenix tournament manager, where it is the **default Swiss pairing
 engine**, running in-process with nothing to install beside the app.
 JaVaFo remains available there as an optional alternative, for organisers
@@ -1253,10 +1258,12 @@ cross-checking pairing correctness against any other engine.
 
 ## Licence
 
-Copyright (c) 2026 teapot-chess. All rights reserved. No licence is granted to
-use, copy, modify or distribute this software. See [LICENSE](LICENSE).
+Copyright 2026 Jorian Burssens. Ainalrami is published as reference source
+under the [Microsoft Reference Source License](LICENSE) (Ms-RSL). You may read
+it; you may not run, copy, modify or distribute it. Versions published before
+2026-11-07 keep the licence they were published under.
 
-One exception, and it is not ours to waive: parts of this engine are derived
+One part is not ours to relicense: parts of this engine are derived
 from [bbpPairings](https://github.com/BieremaBoyzProgramming/bbpPairings),
 which is Apache License 2.0. `Ainalrami.Pairing`'s bracket cascade is a
 stage-for-stage port of `dutch.cpp`, and `Ainalrami.WeightedMatching`'s control
@@ -1264,8 +1271,7 @@ flow was read directly from bbpPairings' matching sources. No bbpPairings code
 is reproduced here - it is C++ and this is Elixir - but the algorithm and
 structure are theirs, so the attribution and the Apache text stay with the
 project ([NOTICE](NOTICE), [THIRD_PARTY](THIRD_PARTY)), and [NOTICE](NOTICE)
-spells out exactly which files are derived and what changed. Releases published
-before 2026-11-01 keep the Apache 2.0 licence they were published under.
+spells out exactly which files are derived and what changed.
 
 The vendored bbpPairings binaries and JaVaFo are covered separately; see
 [NOTICE](NOTICE).

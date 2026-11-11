@@ -125,11 +125,18 @@ defmodule Ainalrami.Tiebreaks.Team do
   `+` with no opponent) or the `320` record names the team for the
   round, and a zero-point bye otherwise.
 
-  A match where no board was played over the board - every game a forfeit
-  - is a forfeited match: won by the side with more game points, lost by
-  the other, and a double forfeit when neither scored. A TRF26 `330`
+  A match is PLAYED when at least one board was played over the board, or
+  when both teams scored on a board by forfeit - both turned up (TRF-2026
+  `330`: a team shows up if one player is present). Otherwise every game
+  was a forfeit and only one side, or neither, scored: a forfeited match,
+  won by the side that scored, a double forfeit when neither did. This is
+  the one place that is decided; `Ainalrami.TeamReplay` reads a match's
+  colour, meeting and float from it, and `:forfeit_win` is [C2]'s "won a
+  match by forfeit". A TRF26 `330`
   record forfeits a match neither team has board records for (see
-  `declared_forfeit/5`); a match with board records is read from them.
+  `declared_forfeit/5`), and outranks the bye the winners' `0000 +` (330
+  Note 1) or `0000 F` would otherwise read as; a match with board records
+  is read from them.
 
   Match points are the file's TRF26 `362` record (`W`/`D`/`L`; `A` for a
   match lost by forfeit) when it has one, 2/1/0 otherwise; `:match_points`
@@ -137,7 +144,8 @@ defmodule Ainalrami.Tiebreaks.Team do
   match points, else `362`'s `P`, else a win, and the `320` record's game
   points, else a win on every board. A TRF26 `300` record gives a team's
   board order in one match, in place of its roster order. Options:
-  `:boards` (default: the most games any match had), `:primary`,
+  `:boards` (default: the count the file's TRF26 `352` colour sequence
+  states, else the most games any match had), `:primary`,
   `:match_points`, `:rounds`, `:predetermined?`.
   """
   def from_trf(%{players: players, teams: trf_teams, tournament: tournament} = trf, opts \\ []) do
@@ -198,13 +206,14 @@ defmodule Ainalrami.Tiebreaks.Team do
       end
       |> Map.new(fn {key, list} -> {key, Enum.sort(list)} end)
 
+    # The board count: the caller's, else the file's TRF26 `352` colour
+    # sequence (one letter per board), else the most games any match had.
+    # The last is only an inference, and a round forfeited on every match
+    # with `330` records alone has no games to count - its winners were
+    # credited one board (sweep 2026-11-11).
     boards =
       Keyword.get_lazy(opts, :boards, fn ->
-        games
-        |> Map.values()
-        |> Enum.map(&length(boards_of(&1)))
-        |> Enum.max(fn -> 1 end)
-        |> max(1)
+        board_count(tournament) || inferred_boards(games)
       end)
 
     pab_gp = get_in(tournament, [:team_pab, :game_points])
@@ -255,6 +264,25 @@ defmodule Ainalrami.Tiebreaks.Team do
     )
   end
 
+  @doc """
+  The number of boards a file's TRF26 `352` record states (its colour
+  sequence, one letter per board), or nil without one.
+  """
+  def board_count(tournament) do
+    case Map.get(tournament, :board_colours) do
+      seq when is_binary(seq) and seq != "" -> String.length(seq)
+      _ -> nil
+    end
+  end
+
+  defp inferred_boards(games) do
+    games
+    |> Map.values()
+    |> Enum.map(&length(boards_of(&1)))
+    |> Enum.max(fn -> 1 end)
+    |> max(1)
+  end
+
   # `%{{team, round} => %{rank => board index}}` from the TRF26 `300`
   # records.
   defp board_orders(tournament) do
@@ -298,7 +326,12 @@ defmodule Ainalrami.Tiebreaks.Team do
   defp unfilled?(g), do: is_nil(g.opponent) and g.kind in [:full_bye, :pab]
 
   defp trf_match(games, team_of, points, pab_team?) do
-    met = Enum.filter(games, fn {_, _, g} -> g.opponent end)
+    # A game against a player on no team's roster says nothing about which
+    # team this one met - `TeamReplay.read_round/6` reads it the same way.
+    # Counting it named `nil` as the opponent team, and the match points
+    # then looked `nil` up as a team (sweep 2026-11, AIN-2).
+    met =
+      Enum.filter(games, fn {_, _, g} -> g.opponent && Map.has_key?(team_of, g.opponent) end)
 
     case met do
       [] ->
@@ -329,8 +362,8 @@ defmodule Ainalrami.Tiebreaks.Team do
           |> Map.new(fn {{_, _, g}, board} -> {board, g.points} end)
 
         # A match where no board was played over the board - every game a
-        # forfeit - is a forfeited match (`:unplayed` until both sides are
-        # read, `with_match_points/2`).
+        # forfeit - is `:unplayed` until both sides are read: played after
+        # all if both scored, a forfeit otherwise (`with_match_points/2`).
         played? = Enum.any?(met, fn {_, _, g} -> g.kind == :played end)
 
         %Match{
@@ -348,8 +381,13 @@ defmodule Ainalrami.Tiebreaks.Team do
   # 12 then reads it as a win on every board, reference question Q3); the
   # loser, or both sides of a double forfeit, the forfeit's match points
   # and nothing. A match with board records is read from its boards.
+  #
+  # TRF-2026 330, Note 1, credits the winner's present players with
+  # `0000 - +`, which on its own reads as a pairing-allocated bye; the
+  # older `0000 - F` reads as a zero-point bye here. A `330` record naming
+  # the team outranks either: the round is the forfeited match, not a bye.
   defp declared_forfeit(%Match{kind: kind} = m, team, r, forfeited, points)
-       when kind in [:zero_bye] do
+       when kind in [:zero_bye, :pab] do
     found =
       Enum.find_value(forfeited, fn
         {{^r, ^team, other}, winner} -> {other, winner == :white}
@@ -399,29 +437,33 @@ defmodule Ainalrami.Tiebreaks.Team do
         Map.new(entry.rounds, fn
           {r, %Match{kind: :played, opponent: opp} = m} ->
             theirs = by_id[opp].rounds[r].gp
+            {r, %{m | mp: by_game_points(m.gp, theirs, match_points)}}
 
-            mp =
-              cond do
-                m.gp > theirs -> match_points.win
-                m.gp < theirs -> match_points.loss
-                true -> match_points.draw
-              end
-
-            {r, %{m | mp: mp}}
-
-          # Every board forfeited: the side with more game points won the
-          # match by forfeit; both on nothing is a double forfeit. Level on
-          # something (some boards forfeited each way, none played) is left
-          # a drawn match, as TieBreakServer scores it (reading T8).
+          # No board played over the board. THE definition of a played
+          # match, which the checker's replay (`Ainalrami.TeamReplay`) and
+          # the generator read from here: when BOTH teams scored on a board
+          # by forfeit, both turned up (TRF-2026 330: a team shows up "if at
+          # least one player is present"; Gacrux `decide_score`: "if both
+          # team have points we consider the match played"), so the match
+          # was played and is scored on its game points like any other -
+          # a colour, a meeting, a float, and not a forfeit win for [C2].
+          # Only when one side scored nothing is it a forfeit, won by the
+          # side that scored; neither scoring is a double forfeit. Until
+          # 2026-11-11 only the level case (reading T8) was played, and a
+          # 2-1 on forfeits was a forfeit win.
           {r, %Match{kind: :unplayed, opponent: opp} = m} ->
             theirs = by_id[opp].rounds[r].gp
 
             m =
               cond do
-                m.gp > theirs -> %{m | kind: :forfeit_win, mp: match_points.win}
-                m.gp < theirs -> %{m | kind: :forfeit_loss, mp: points.forfeit}
-                m.gp == 0 -> %{m | kind: :forfeit_loss, mp: points.forfeit}
-                true -> %{m | kind: :played, mp: match_points.draw}
+                m.gp > 0 and theirs > 0 ->
+                  %{m | kind: :played, mp: by_game_points(m.gp, theirs, match_points)}
+
+                m.gp > theirs ->
+                  %{m | kind: :forfeit_win, mp: match_points.win}
+
+                true ->
+                  %{m | kind: :forfeit_loss, mp: points.forfeit}
               end
 
             {r, m}
@@ -431,6 +473,15 @@ defmodule Ainalrami.Tiebreaks.Team do
         end)
 
       %{entry | rounds: rounds}
+    end
+  end
+
+  # A played match's match points, from the two sides' game points.
+  defp by_game_points(ours, theirs, match_points) do
+    cond do
+      ours > theirs -> match_points.win
+      ours < theirs -> match_points.loss
+      true -> match_points.draw
     end
   end
 

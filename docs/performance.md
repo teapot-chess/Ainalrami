@@ -1,6 +1,7 @@
 # Performance
 
-First where the certified shortcuts switch on, then the score variants
+First ten thousand players (one round of a big open, timed at 1,000 to
+10,000), then where the certified shortcuts switch on, then the score variants
 (`Pairing.pair_variants/3`, the batch behind OpenPairings' next-round
 preview). Then the timing study, which measures
 all three engines on 3,000 random positions and is the figure to quote.
@@ -12,6 +13,148 @@ pairing past Gacrux on every benchmark file, and the large-field pass
 before it. The passes measure single benchmark positions, one per row;
 read their tables as before-and-after on those positions, not as a
 comparison of engines.
+
+## Ten thousand players (2026-11-08)
+
+The question: can the Dutch engine pair a 5,000- to 10,000-player open in
+about a second a round, without changing one pairing? Nothing in the
+corpora goes past 600 players, so the first job was a field that does.
+
+### The field
+
+`bench/scale.exs` generates a big weekend open: ratings roughly normal
+around 1750 (sd 330), 8% unrated, results from the Elo expectation with a
+White edge and a draw rate that shrinks with the rating gap, 2% forfeits,
+requested half- and zero-point byes, withdrawals from round 3, 3% late
+entrants in rounds 2-3, a forbidden pair per 500 players, optionally Baku
+acceleration. Each tournament is played forward by the engine and cached,
+and every round is re-paired from the state just before it with
+`pair_next_round/2`. With `SCALE_REF` it compiles an older release's
+`lib/` beside this one (renamed `AinalramiRef`), times the two alternately
+run by run, best of 3 (5 up to 2,000 players), and compares every answer.
+
+### Where the time was
+
+Two rounds were not slow; they were pathological. At 10,000 players
+v0.51.1 took 50 s on round 2 and 10 s on round 3, at 5,000 9.6 s on round
+2, against 1.4-2 s for every other round. A stack sampler (`SCALE_SAMPLE`,
+1 ms) put nearly all of it in one place:
+
+* **The bye group's exposable set.** With an odd field, the bottom group
+  that must give up the bye was checked by building its whole compatibility
+  graph - O(q²) edges, a 2,000-player score group in round 2 is two
+  million of them - and running a full maximum-matching search from every
+  exposed vertex. The absorbed-pool check did the same.
+
+The rest was ordinary linear work done more often than it had to be:
+
+* round 1 at 10,000: 72% in the direct bracket's S1 loop re-scanning S2
+  from the top past opponents already used, eleven million set lookups;
+* 15-18% recomputing each player's score before each earlier round for the
+  float history, from scratch, per question;
+* 17-20% building the completability oracle's adjacency through an
+  intermediate pair list and a sort;
+* 13-23% in `colour_lb/2`, counting colour preferences through several
+  passes over a map.
+
+### What changed
+
+* `CardinalityMatching.exposable_lazy/2`: the exposable set without the
+  graph. Edges come from a function, rows are generated on demand, the
+  greedy start finds the first compatible unmatched partner, augmenting
+  searches are skipped once fewer than two vertices are exposed (nothing
+  to augment between), and each Gallai-Edmonds search stops as soon as
+  every vertex is outer. `bye_group_pool` and `absorbed_pool` use it.
+  The answer is the same because the exposable set is canonical: it does
+  not depend on which maximum matching the search finds. That was not
+  taken on trust - a property test checks the lazy set against the built
+  graph's on 1,500 random graphs. Under proof recording the old built
+  graph is kept, so the witness a proof writes is unchanged.
+* `direct_s1` drops used players from the head of S2 before each walk.
+* Float history memoises scores by `{rank, rounds back}` for the duration
+  of one `with_float_history/2`.
+* `build_oracle` builds each player's row directly, below and above.
+* `colour_lb/2` counts in one `:maps.fold`.
+
+Not one decision path was touched: same candidates, same order, same
+answers to every question, fewer ways of arriving at them.
+
+### Results
+
+v0.51.1 against this release, one tournament per size, 11 rounds,
+alternating best-of runs on a 16-thread desktop with other work on it:
+
+| field | median before | after | slowest before | after | 11 rounds before | after | speed-up |
+|---|---|---|---|---|---|---|---|
+| 1,000 | 121 ms | 97 ms | 329 ms | 204 ms | 1.58 s | 1.13 s | 1.4x |
+| 2,000 | 265 ms | 192 ms | 455 ms | 262 ms | 2.96 s | 1.78 s | 1.7x |
+| 5,000 | 694 ms | 466 ms | 9.56 s | 783 ms | 16.63 s | 5.25 s | 3.2x |
+| 10,000 | 1.81 s | 1.05 s | 50.32 s | 1.38 s | 75.5 s | 11.1 s | 6.8x |
+
+| field | r1 | r2 | r3 | r4 | r5 | r6 | r7 | r8 | r9 | r10 | r11 |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| 5,000 before | 617 ms | 9.56 s | 630 ms | 552 ms | 632 ms | 623 ms | 694 ms | 768 ms | 776 ms | 985 ms | 786 ms |
+| 5,000 after | 217 ms | 391 ms | 364 ms | 434 ms | 419 ms | 466 ms | 512 ms | 571 ms | 521 ms | 783 ms | 568 ms |
+| 10,000 before | 1.39 s | 50.32 s | 9.89 s | 1.49 s | 1.65 s | 1.81 s | 1.35 s | 1.79 s | 1.87 s | 2.01 s | 1.91 s |
+| 10,000 after | 308 ms | 690 ms | 1.05 s | 955 ms | 997 ms | 1.16 s | 875 ms | 1.19 s | 1.34 s | 1.38 s | 1.15 s |
+
+All 44 rounds identical to v0.51.1. So: 5,000 players well under a
+second a round, 10,000 at about one, 1.4 s at the worst.
+
+### How "identical" was checked
+
+* `tools/perf_diff.exs` corpora, v0.51.1 against this tree, pairings,
+  explanations, perturbed explanations and alternatives fingerprinted:
+  capped at `DIFF_LIMIT` 500, 300, 60 and 60 tournaments per axis:
+  small (33,049 rounds), flags (7,727), large
+  (1,547), early (840). 43,163 rounds, 0 differing, 0 missing.
+* `bench/scale.exs` in generation mode, every round of every tournament
+  digested, each tree playing its own tournaments forward (so one
+  different pairing changes every later round's input too): 3,000
+  tournaments at 12-150 players, 80 at 300-600, 16 at 1,000-2,000, 900
+  Baku at 20-150, 12 Baku at 1,000-3,000, 4 at 5,000-10,000. 4,012
+  tournaments, 36,332 rounds, all digests equal.
+* The timing runs above compare every answer as they go.
+* `mix test`, whole suite.
+
+### What is left
+
+At 10,000 the round is now flat, broad linear work: the direct walk's
+per-pair rung and edge lookups, the float history it still has to read,
+the oracle build, player facts. No single function above ~15%. Another
+halving means changing data structures across the bracket walk, not
+removing a mistake, and was not attempted here.
+
+### Reproducing
+
+    # timings and answers against a release
+    SCALE_REF=v0.51.1 mix run bench/scale.exs
+    # where a round's time goes
+    SCALE_SAMPLE=10000:2 mix run bench/scale.exs
+
+    # generated tournaments: in each checkout, then compare sorted digests
+    SCALE_GEN=1 SCALE_ROUNDS=9 SCALE_COUNT=500 SCALE_SIZES=12,24,40,64,100,150 \
+      SCALE_DIGESTS=OUT/small.txt mix run bench/scale.exs
+    SCALE_ACCEL=baku SCALE_GEN=1 SCALE_ROUNDS=11 SCALE_COUNT=6 \
+      SCALE_SIZES=1000,3000 SCALE_DIGESTS=OUT/baku_large.txt mix run bench/scale.exs
+
+    # the corpora, in a v0.51.1 checkout (BASE) and this one (NEW)
+    for s in small flags large early; do
+      MIX_ENV=test DIFF_LIMIT=60 mix run tools/perf_diff.exs corpus $s DIR/$s   # 500/300 for small/flags
+    done
+    MIX_ENV=test mix run tools/perf_diff.exs compare BASE/small NEW/small
+
+On the 80-core VM the full corpora (no `DIFF_LIMIT`) and a larger
+generated run take hours and belong there (`SCALE_GEN` uses every scheduler):
+
+    # in both checkouts, then compare each set as above
+    for s in small flags large early; do
+      MIX_ENV=test DIFF_CHUNK=500 mix run tools/perf_diff.exs corpus $s DIR/$s
+    done
+    SCALE_GEN=1 SCALE_ROUNDS=11 SCALE_COUNT=5000 SCALE_SIZES=40,100,150,300 \
+      SCALE_DIGESTS=OUT/vm.txt mix run bench/scale.exs
+    SCALE_GEN=1 SCALE_ROUNDS=11 SCALE_COUNT=40 SCALE_SEED_FROM=1001 \
+      SCALE_SIZES=1000,2000,5000,10000 SCALE_DIGESTS=OUT/vm_huge.txt mix run bench/scale.exs
 
 ## The certified shortcuts' threshold (2026-10-08)
 

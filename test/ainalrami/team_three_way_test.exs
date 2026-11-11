@@ -33,30 +33,19 @@ defmodule Ainalrami.TeamThreeWayTest do
   For each engine pair:
 
     * `identical`;
-    * `reading_c6_following`, `reading_c6_graded`, `reading_c6_both` - a
-      difference involving Gacrux that Gacrux itself gives up once one of
-      its [C6] (2.3.3) readings is replaced, in memory and nothing else
-      changed, by Ainalrami's (tried in that order):
-        - *following*: which scoregroup "the following scoregroup" is.
-          Gacrux takes the score level one below the bracket's; when an
-          earlier bracket took every team of that level as upfloaters it is
-          empty and Gacrux skips [C6]. Ainalrami and chesspairing take the
-          highest score level still to be paired below the residents.
-        - *graded*: Gacrux reads [C6] pass/fail at the following
-          scoregroup's parity minimum (`check_c6`, the first key of
-          `select_upfloaters`); Ainalrami (`c6_excess/4`) and chesspairing
-          (`lexswiss.selectUpfloaterSet`'s `c6UpfloaterCount`) read it
-          graded - the fewest upfloaters that scoregroup will need.
-        - *both* at once.
-        - *float_forfeit*: whether a forfeited match (every board, or a
-          `330`) against a team on another score makes a floater (1.5,
-          read by [C7]). Gacrux counts played matches only
-          (`tiebreak.compute_flt`), and so does chesspairing; Ainalrami
-          counts every match.
-        - *forfeit_gp*: where a forfeited match's game points come from.
-          `Ainalrami.Test.TeamThreeWay.forfeit_points_in_rows/1` says how
-          the two read it; this one is a rewritten file, not a script.
-        - *combined*: *following*, *float_forfeit* and *forfeit_gp* at once.
+    * `reading_c6_graded` - a difference involving Gacrux that Gacrux
+      itself gives up once its [C6] (2.3.3) grading is replaced, in memory
+      and nothing else changed, by Ainalrami's: Gacrux reads [C6] pass/fail
+      at the following scoregroup's parity minimum (`check_c6`, the first
+      key of `select_upfloaters`); Ainalrami (`c6_excess/5`) and
+      chesspairing (`lexswiss.selectUpfloaterSet`'s `c6UpfloaterCount`)
+      read it graded - the fewest upfloaters that scoregroup will need.
+      Three more readings were named here until 2026-11-11 and are gone
+      because Ainalrami 0.56.0 took Gacrux's side: which scoregroup "the
+      following scoregroup" is (`c6-next`), whether a forfeited match makes
+      a floater (`flt-forfeit`), and where a forfeited match's game points
+      come from (a rewritten file; the writer has put a forfeited match on
+      the players' lines since 0.53.0, so the rewrite changed nothing).
       An `ac` difference is named when each side is Gacrux's answer under
       some set of readings (`classify_ac/5`);
       The replacements are a VM-side script, `gacrux_readings.py`, not in
@@ -79,8 +68,9 @@ defmodule Ainalrami.TeamThreeWayTest do
   |---|---|---|---|
   | G1 | 3.6.1 seats by TPN | TPN | TPN (fixed upstream; the probe's case 1 now pairs 1-3, 2-4) |
   | A6 | [C6] pass/fail or graded | graded | pass/fail -> `reading_c6_graded` |
-  | - | [C6]'s "following scoregroup" when the next score level was emptied by upfloaters | the next non-empty level | the empty level, so no [C6] -> `reading_c6_following` (found here, seed 41 round 5 of the first smoke) |
-  | - | a forfeited match makes a floater (1.5) | yes | no -> `reading_float_forfeit` (found here) |
+  | - | [C6]'s "following scoregroup" when the next score level was emptied by upfloaters | the empty level, so no [C6] (since 0.56.0; was the next non-empty level) | the empty level (found here, seed 41 round 5 of the first smoke) |
+  | - | a forfeited match makes a floater (1.5) | no (since 0.56.0; was yes) | no (found here) |
+  | - | both teams scoring only by forfeit is a played match | yes (since 0.56.0) | - |
   | A7 | "complies with" [C7] when 0 is unattainable | minimise | minimise |
   | A3 | a forfeited match is a meeting for [C1] | no | no |
   | A9 | a forfeit counts in 3.4.3's matches played | no | no |
@@ -145,17 +135,12 @@ defmodule Ainalrami.TeamThreeWayTest do
   @moduletag timeout: :infinity
 
   @pairs [ag: {:a, :g}, ac: {:a, :c}, gc: {:g, :c}]
-  # Gacrux with one of its readings replaced by Ainalrami's: `{kind, [C6]
-  # patches for the readings script, forfeit points in the player rows?}`.
-  @readings [
-    reading_c6_following: {"c6-next", false},
-    reading_c6_graded: {"c6-graded", false},
-    reading_c6_both: {"c6-graded,c6-next", false},
-    reading_float_forfeit: {"flt-forfeit", false},
-    reading_forfeit_gp: {nil, true},
-    reading_combined: {"c6-next,flt-forfeit", true}
-  ]
-  @kinds ~w(identical reading_c6_following reading_c6_graded reading_c6_both reading_float_forfeit reading_forfeit_gp reading_combined crash unexplained_colour unexplained_pairing unexplained_split)a
+  # Gacrux with one of its readings replaced by Ainalrami's: `{kind, patches
+  # for the readings script}`. Since 0.56.0 (2026-11-11) only [C6]'s
+  # grading is left: Ainalrami took Gacrux's following scoregroup and its
+  # played-only floats, and writes a forfeited match on the players' lines.
+  @readings [reading_c6_graded: "c6-graded"]
+  @kinds ~w(identical reading_c6_graded crash unexplained_colour unexplained_pairing unexplained_split)a
 
   test "Ainalrami, Gacrux and chesspairing on identical team positions" do
     unless Gacrux.available?(), do: flunk("Gacrux not found at #{Gacrux.script_path()}")
@@ -368,14 +353,10 @@ defmodule Ainalrami.TeamThreeWayTest do
     end
   end
 
-  defp applies?({patches, rows?}, file),
-    do: (patches == nil or readings_script() != nil) and (not rows? or file =~ "\n330 ")
+  defp applies?(_patches, _file), do: readings_script() != nil
 
-  defp gacrux_reading(file, r, {patches, rows?}) do
-    file = if rows?, do: TeamThreeWay.forfeit_points_in_rows(file), else: file
-    opts = if patches, do: [script: [readings_script(), patches]], else: []
-    gacrux(file, r, opts)
-  end
+  defp gacrux_reading(file, r, patches),
+    do: gacrux(file, r, script: [readings_script(), patches])
 
   defp classify_plain(:colour), do: :unexplained_colour
   defp classify_plain(:pairing), do: :unexplained_pairing
@@ -481,15 +462,11 @@ defmodule Ainalrami.TeamThreeWayTest do
     """
   end
 
-  defp label({patches, rows?}),
-    do: Enum.join(Enum.reject([patches, rows? && "forfeit-rows"], &(&1 in [nil, false])), "+")
+  defp label(patches), do: patches
 
   defp header(kind) do
     case to_string(kind) do
       "reading_c6_" <> r -> "c6 " <> r
-      "reading_forfeit_gp" -> "ff gp"
-      "reading_float_forfeit" -> "ff float"
-      "reading_combined" -> "combined"
       "unexplained_" <> r -> "UNEX " <> r
       k -> k
     end

@@ -141,7 +141,7 @@ defmodule Ainalrami.TeamProof.LargeEvents do
 
         if shape.forfeit > 0 and :rand.uniform(shape.forfeit) == 1 do
           # The whole match forfeited by one side (C.04.2 3.5: not played, so
-          # not a meeting and no colour).
+          # not a meeting and no colour - and, 1.5, nobody's float).
           {winner, loser} = if :rand.uniform(2) == 1, do: {w, b}, else: {b, w}
 
           state
@@ -151,10 +151,10 @@ defmodule Ainalrami.TeamProof.LargeEvents do
               | match_points: t.match_points + 2.0,
                 game_points: t.game_points + boards,
                 won_by_forfeit?: true,
-                floated_last_round?: floated?
+                floated_last_round?: false
             }
           end)
-          |> update_team(loser, &%{&1 | floated_last_round?: floated?})
+          |> update_team(loser, &%{&1 | floated_last_round?: false})
         else
           gap = state[w].strength - state[b].strength
           gp_w = Enum.sum(for _ <- 1..boards, do: board(gap, shape.spread))

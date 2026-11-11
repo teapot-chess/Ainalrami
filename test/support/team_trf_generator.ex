@@ -128,7 +128,8 @@ defmodule Ainalrami.TeamTrfGenerator do
       colours: Map.new(1..teams, &{&1, []}),
       played: Map.new(1..teams, &{&1, []}),
       forfeit_won: MapSet.new(),
-      floated: MapSet.new()
+      floated: MapSet.new(),
+      floating: MapSet.new()
     }
 
     planned =
@@ -148,15 +149,10 @@ defmodule Ainalrami.TeamTrfGenerator do
 
         case paired do
           {:ok, {pairs, bye}} ->
-            floated =
-              for {a, b, _} <- pairs,
-                  score(st, a, ctx) != score(st, b, ctx),
-                  t <- [a, b],
-                  into: MapSet.new(),
-                  do: t
-
-            st = Enum.reduce(pairs, st, &play_match(&1, &2, r, ctx))
-            {:cont, {%{give_bye(st, bye, r, ctx) | floated: floated}, r}}
+            # 1.5: only a PLAYED match against a different score makes a
+            # floater (`engine_history/7` collects them as the matches go).
+            st = Enum.reduce(pairs, %{st | floating: MapSet.new()}, &play_match(&1, &2, r, ctx))
+            {:cont, {%{give_bye(st, bye, r, ctx) | floated: st.floating}, r}}
 
           :stop ->
             {:halt, {st, r - 1}}
@@ -200,7 +196,10 @@ defmodule Ainalrami.TeamTrfGenerator do
       |> then(&if(type_code, do: Map.put(&1, :type_code, type_code), else: &1))
       |> then(
         &if(engine?,
-          do: Map.put(&1, :initial_colour, if(ctx.initial_colour == :black, do: "b", else: "w")),
+          do:
+            &1
+            |> Map.put(:initial_colour, if(ctx.initial_colour == :black, do: "b", else: "w"))
+            |> Map.put(:board_colours, Trf.board_colours(boards)),
           else: &1
         )
       )
@@ -381,15 +380,22 @@ defmodule Ainalrami.TeamTrfGenerator do
     end
   end
 
-  # `a` had White on board 1. Colours and opponents count only a match
-  # with a board played over the board; one without is won by forfeit by
-  # the side with more game points.
-  defp engine_history(st, a, b, pa, pb, played?) do
+  # `a` had White on board 1. Colours, opponents and floats count only a
+  # PLAYED match: a board played over the board, or both teams scoring on a
+  # board by forfeit (both turned up - `Tiebreaks.Team.from_trf/2`). One
+  # without is won by forfeit by the side that scored.
+  defp engine_history(st, a, b, pa, pb, played?, ctx) do
     cond do
-      played? ->
+      played? or (pa > 0 and pb > 0) ->
+        floating =
+          if score(st, a, ctx) != score(st, b, ctx),
+            do: st.floating |> MapSet.put(a) |> MapSet.put(b),
+            else: st.floating
+
         %{
           st
-          | colours: %{
+          | floating: floating,
+            colours: %{
               st.colours
               | a => st.colours[a] ++ [:white],
                 b => st.colours[b] ++ [:black]
@@ -483,7 +489,7 @@ defmodule Ainalrami.TeamTrfGenerator do
         {games, pa + @wins[rx], pb + @wins[ry], played? or rx not in ["+", "-"]}
       end)
 
-    st = engine_history(st, a, b, pa, pb, played?)
+    st = engine_history(st, a, b, pa, pb, played?, ctx)
 
     {w, d, l} = ctx.mpts
 

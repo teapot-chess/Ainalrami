@@ -1,5 +1,10 @@
 Ainalrami
-Copyright (c) 2026 teapot-chess. All rights reserved; see LICENSE.
+Copyright 2026 Jorian Burssens.
+
+Ainalrami is licensed under the Microsoft Reference Source License (Ms-RSL);
+see LICENSE. The source may be read for reference; it may not be run,
+copied, modified or distributed. Versions published before 2026-11-07 keep
+the licence they were published under.
 
 The parts derived from BBP Pairings (below) stay subject to the notice and
 attribution terms of the Apache License, Version 2.0 under which BBP Pairings

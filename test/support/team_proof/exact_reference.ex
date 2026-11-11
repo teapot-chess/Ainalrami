@@ -23,8 +23,10 @@ defmodule Ainalrami.TeamProof.ExactReference do
       teams left behind pairable ([C1], [C3]).
     * [C5] maximises the upfloaters' scores taken in ascending order.
     * [C6] minimises how many more upfloaters than the parity minimum the
-      following scoregroup (the highest score among the lower teams) would
-      need; 0 when every team of that score floated.
+      following scoregroup would need: the next score below the residents'
+      among every team of the round, the bye's included (2026-11-11;
+      before, the highest score among the lower teams); 0 when no team of
+      that score is left to pair.
     * [C7] minimises upfloaters that floated last round, before 3.5.4's
       order; off in the last two rounds, as is [C10].
     * 3.6: least {C8, C10} (C8 before C10), then the smallest identifier.
@@ -86,7 +88,8 @@ defmodule Ainalrami.TeamProof.ExactReference do
 
     with {bye, rest, bye_reasons} <- bye(field),
          true <- pairable?(rest) do
-      {bracket_pairs, bracket_reasons} = rest |> brackets(last_two?, []) |> Enum.unzip()
+      {bracket_pairs, bracket_reasons} =
+        rest |> brackets({last_two?, levels(field)}, []) |> Enum.unzip()
 
       allocated =
         bracket_pairs
@@ -170,19 +173,23 @@ defmodule Ainalrami.TeamProof.ExactReference do
   # 3.3.2's loop: top scoregroup + upfloaters (3.5), paired (3.6)
   # ------------------------------------------------------------------
 
-  defp brackets([], _last_two?, acc), do: Enum.reverse(acc)
+  # The round's score levels, from the whole field before the bye leaves it:
+  # [C6]'s following scoregroup is the next of these below the residents.
+  defp levels(field), do: field |> Enum.map(& &1.match_points) |> Enum.uniq()
 
-  defp brackets(remaining, last_two?, acc) do
+  defp brackets([], _settings, acc), do: Enum.reverse(acc)
+
+  defp brackets(remaining, {last_two?, round_levels} = settings, acc) do
     top = remaining |> Enum.map(& &1.match_points) |> Enum.max()
     {residents, lower} = Enum.split_with(remaining, &(&1.match_points == top))
 
-    {set, decided_by} = select(residents, lower, last_two?)
+    {set, decided_by} = select(residents, lower, last_two?, round_levels)
 
     tpns = set |> Enum.sort_by(&{0 - &1.match_points, &1.tpn}) |> Enum.map(& &1.tpn)
     ups = MapSet.new(set, & &1.tpn)
     pairs = bracket_pairing(residents ++ set, ups, last_two?)
     reasons = %{upfloaters: tpns, decided_by: decided_by}
-    brackets(lower -- set, last_two?, [{pairs, reasons} | acc])
+    brackets(lower -- set, settings, [{pairs, reasons} | acc])
   end
 
   # ------------------------------------------------------------------
@@ -198,7 +205,7 @@ defmodule Ainalrami.TeamProof.ExactReference do
   #               the scores in ascending order" is "fewest on the
   #               lowest level, then the next", sets being equal-sized  [C5]
   #   :u          1 on an edge between the following scoregroup (the
-  #               highest score among the lower teams) and a team
+  #               next score below the residents' in the round) and a team
   #               below it - that team is an upfloater into the
   #               following scoregroup's bracket                      [C6]
   #   :c7         1 on a resident-lower edge whose lower team floated
@@ -216,7 +223,7 @@ defmodule Ainalrami.TeamProof.ExactReference do
   # 2, and its parity is the same for every set with [C5]'s optimum (the
   # same number of that score floats), so minimising |U| minimises [C6].
 
-  defp select(residents, lower, last_two?) do
+  defp select(residents, lower, last_two?, round_levels) do
     r = length(residents)
     teams = residents ++ lower
     n = length(teams)
@@ -224,7 +231,11 @@ defmodule Ainalrami.TeamProof.ExactReference do
 
     levels = lower |> Enum.map(& &1.match_points) |> Enum.uniq() |> Enum.sort()
     level_of = Map.new(Enum.with_index(levels))
-    following = List.last(levels)
+    # [C6]: the next level below the residents' in the ROUND, whoever is
+    # left of it. With nobody of that score among the lower teams no edge
+    # carries `:u` and every set scores 0 on [C6].
+    top = hd(residents).match_points
+    following = round_levels |> Enum.filter(&(&1 < top)) |> Enum.max(fn -> nil end)
 
     place =
       lower

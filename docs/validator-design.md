@@ -355,7 +355,7 @@ with D1-D9, B1-B11 and L1-L16 costs an hour and tells us where to look.
 
 * **Licence: Apache-2.0** (GitHub's licence field and the README). We may
   build and run it for testing without restriction. We do not vendor it
-  into Ainalrami (whose licence is all rights reserved); it lives in the
+  into Ainalrami (whose licence is Ms-RSL, reference source only); it lives in the
   VM work directory, as bbpPairings and Gacrux do. If it is ever
   redistributed, its LICENSE and any NOTICE go with it.
 * **Edition.** The README links the 2026 text (`C040401202602`); the last

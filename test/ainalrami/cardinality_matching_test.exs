@@ -218,6 +218,30 @@ defmodule Ainalrami.CardinalityMatchingTest do
     |> then(fn {set, rng} -> {Enum.sort(set), rng} end)
   end
 
+  # `exposable_lazy/2` is `exposable/1` without the graph built: the same
+  # answer on every graph, sparse to complete, odd and even orders.
+  test "the lazy exposable set is the built graph's" do
+    rng = :rand.seed_s(:exsss, {29, 31, 37})
+
+    {checked, _rng} =
+      Enum.reduce(1..1500, {0, rng}, fn _, {checked, rng} ->
+        {n, rng} = :rand.uniform_s(70, rng)
+        {density, rng} = :rand.uniform_s(10, rng)
+        {edges, rng} = random_edges(n, density, rng)
+        set = MapSet.new(edges)
+        edge? = fn u, v -> MapSet.member?(set, {min(u, v), max(u, v)}) end
+
+        built = CardinalityMatching.exposable(adjacency(n, edges))
+
+        assert CardinalityMatching.exposable_lazy(n, edge?) == built,
+               "n=#{n} edges=#{inspect(edges)}"
+
+        {checked + if(match?({:ok, _}, built), do: 1, else: 0), rng}
+      end)
+
+    assert checked > 300
+  end
+
   defp random_edges(n, density, rng) do
     pairs = for i <- 0..(n - 1)//1, j <- (i + 1)..(n - 1)//1, do: {i, j}
 

@@ -2637,7 +2637,7 @@ to look: it produced a complete, legal, well-formed pairing every time.
   `lib/ainalrami/weighted_matching.ex` as derived from bbpPairings and
   recording the §4(b) changes. Not really a choice: bbpPairings is
   Apache-2.0 and those two files are ports of it, so the licence is
-  inherited. The repo was public. This is no longer a submission blocker. (Superseded 2026-11-01: the project is all rights reserved; only the bbpPairings-derived parts keep Apache terms.)
+  inherited. The repo was public. This is no longer a submission blocker. (Superseded 2026-11-01: the project was all rights reserved; superseded again: it is now FSL-1.1-ALv2, and only the bbpPairings-derived parts keep Apache terms.)
 
 ## The 2.55M-tournament run, and the blind spot it did not have (2026-08-17)
 

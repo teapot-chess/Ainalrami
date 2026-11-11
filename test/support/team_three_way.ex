@@ -172,10 +172,12 @@ defmodule Ainalrami.Test.TeamThreeWay do
       `362 TW 2.0   TD 1.0   TL 0.0` reads the same in all three. The
       dropped `P` is in the `320` record (the bye's match and game points),
       and `A` is the generator's default, a loss.
-    * `352`. Not written by Ainalrami. Without it chesspairing counts
-      reserves as boards when it scores a bye (with reserves on the
-      rosters it disagreed on about one round in seven; with `352`, none); Gacrux reads the board
-      count from it too. `WBWB...` of the board count is added (1.6.1).
+    * `352`. Without it chesspairing counts reserves as boards when it
+      scores a bye (with reserves on the rosters it disagreed on about one
+      round in seven; with `352`, none); Gacrux reads the board count from
+      it too. Ainalrami writes it itself since 0.56.0; a file without one
+      gets `WBWB...` of the board count (1.6.1), a file with one is left
+      alone.
     * `240`. Ainalrami's TRF26 writer lifts a trailing `Z` (an absence
       announced for the round not yet paired) out of the `001` line into a
       `240 Z` record of PLAYER numbers. Gacrux reads a `240` in a team file
@@ -199,6 +201,7 @@ defmodule Ainalrami.Test.TeamThreeWay do
 
   def portable(text, k, boards) do
     lines = String.split(text, "\r\n")
+    has_352? = Enum.any?(lines, &String.starts_with?(&1, "352"))
 
     absent =
       for "240 Z" <> _ = line <- lines,
@@ -214,7 +217,9 @@ defmodule Ainalrami.Test.TeamThreeWay do
     |> Enum.reject(&String.starts_with?(&1, "240"))
     |> Enum.flat_map(fn
       "362" <> _ = line ->
-        [team_points(line), "352 " <> board_colours(boards)]
+        if has_352?,
+          do: [team_points(line)],
+          else: [team_points(line), "352 " <> board_colours(boards)]
 
       "001" <> _ = line ->
         rank = line |> String.slice(4, 4) |> String.trim() |> String.to_integer()
@@ -227,71 +232,6 @@ defmodule Ainalrami.Test.TeamThreeWay do
         [line]
     end)
     |> Enum.join("\r\n")
-  end
-
-  @doc """
-  `file` with every match forfeit (`330 +-` / `-+`) also written into the
-  winning team's player records, the way Gacrux reads one: the players'
-  unplayed round (`0000 -`, no result) becomes `0000 - +` and their totals
-  (columns 81-84) gain the point.
-
-  Ainalrami's writer leaves those players on no result and nought, and puts
-  the forfeit in `330` alone; its reader credits the winners with every
-  board from the `330` record. Gacrux takes a team's game points only from
-  its players' totals ("points scored over the board or by forfeit",
-  TRF-2026), so on Ainalrami's file the winners of a forfeited match have
-  no game points. Given only to Gacrux, as the counterfactual that names
-  that difference (`reading_forfeit_gp`).
-  """
-  def forfeit_points_in_rows(file) do
-    parsed = Trf.parse(file)
-
-    team_of =
-      for t <- parsed.teams, rank <- t.player_ranks || [], into: %{}, do: {rank, t.number}
-
-    won =
-      for f <- parsed.tournament[:forfeited_matches] || [],
-          winner = forfeit_winner(f),
-          winner != nil,
-          into: MapSet.new(),
-          do: {winner, f.round}
-
-    file
-    |> String.split("\r\n")
-    |> Enum.map(fn
-      "001" <> _ = line ->
-        rank = line |> String.slice(4, 4) |> String.trim() |> String.to_integer()
-        rounds = for {team, r} <- won, team == team_of[rank], do: r
-        Enum.reduce(rounds, line, &award_forfeit/2)
-
-      line ->
-        line
-    end)
-    |> Enum.join("\r\n")
-  end
-
-  defp forfeit_winner(%{type: type, white: w, black: b}) do
-    case String.trim(type || "") do
-      "+-" -> w
-      "-+" -> b
-      _ -> nil
-    end
-  end
-
-  # Round `r`'s field is columns 92-101 (0-based 91..), the total 81-84.
-  defp award_forfeit(r, line) do
-    at = 91 + (r - 1) * 10
-    line = String.pad_trailing(line, at + 8)
-
-    if String.slice(line, at, 8) == "0000 -  " do
-      total = line |> String.slice(80, 4) |> String.trim() |> String.to_float()
-
-      String.slice(line, 0, 80) <>
-        String.pad_leading(:erlang.float_to_binary(total + 1.0, decimals: 1), 4) <>
-        String.slice(line, 84, at - 84) <> "0000 - +" <> String.slice(line, (at + 8)..-1//1)
-    else
-      line
-    end
   end
 
   # C.04.6 1.6.1: the first team has White on the odd boards.
