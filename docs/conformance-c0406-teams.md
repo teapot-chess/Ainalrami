@@ -380,6 +380,12 @@ following scoregroup's bracket would need, [C1]/[C3]/[C4] there, zero
 when that scoregroup is emptied); then the least [C7] count
 (`c7_previous_floaters/2`, zero in the last two rounds); then 3.5.4's order.
 
+**Corrected 2026-11-11:** "the following scoregroup" here meant the highest
+score still to be paired below the residents. It is now the next score
+level below the residents among the whole round's field, and when no team
+of that level is left the excess is 0 (`c6_excess/5`; *Readings settled,
+2026-11-11* below).
+
 The two readings question 7 put to the SPP ("rank by [C7], then 3.5.4" and
 "the first set in 3.5.4's order achieving the minimum") choose the same set.
 The reading that differs, and is rejected, is "the first legal set in 3.5.4's
@@ -397,7 +403,7 @@ July 2026.
 | Q | Reading implemented | Where | Confidence |
 |---|---|---|---|
 | 5 | [C5]'s best profile among LEGAL sets ([C3] kept) of the [C4]-minimal size; the 3.5.4 example holds when {2,6,8} cannot be paired. Not [C6]. | `TeamPairing.c5_profile_key/2`, `legality/3` | medium-high (high that it is not [C6]) |
-| 6 | A match is won by forfeit when the opponent played no game in it (every board forfeited). One game played makes it a played match, which does not bar the bye. The winner scores every board (Held, *Mastering the TPS* 2026: `0F-4F`). | the host's `%Team{won_by_forfeit?: _}`; documented on `Team` | high; medium for matches forfeited by decision after play |
+| 6 | A match is won by forfeit when the opponent played no game in it (every board forfeited). One game played makes it a played match, which does not bar the bye. The winner scores every board (Held, *Mastering the TPS* 2026: `0F-4F`). **2026-11-11:** so does a match where both teams scored on a board by forfeit, with no game played (*Readings settled* below). | the host's `%Team{won_by_forfeit?: _}`; documented on `Team` | high; medium for matches forfeited by decision after play |
 | 7 | Minimise [C7] among compliant sets, then 3.5.4's order. | `TeamPairing.c7_previous_floaters/2` | high |
 
 Evidence in brief. **Q5:** the example is word for word in the 2024 edition
@@ -714,3 +720,104 @@ answer, and FIDE's answer itself whenever that seats none. Plus the case
 it was built for: sixteen teams from six clubs over five rounds, round one
 pairing 3-12 and 4-11 instead of 3-11 and 4-12. The whole-round validation
 without groups runs unchanged.
+
+## Readings settled, 2026-11-11 (0.56.0)
+
+Four readings changed together. Each was decided on the text and on Mario
+Held's *Mastering the FIDE Team Pairing System* (FIDE TEC, 2026, ver.
+2607090900), the worked C.04.6 example, and each moved the engine towards
+Gacrux, FIDE's TieBreakServer pairing checker, which already read them this
+way. Older sections above that state the previous readings carry a
+correction note.
+
+**A. [C6]'s following scoregroup (2.3.3).** It is the next score level
+below the residents among ALL the teams of the round's field - the team
+with the bye counted, absent teams not. When no team of that score is
+still to be paired once the candidate set has floated, the excess is 0:
+the engine does not look further down. [C6] stays graded (the number of
+upfloaters beyond the parity minimum that bracket will need). The levels
+are computed once per round in `do_pair_round` and carried in the
+selection's `base`; a direct caller of `select_upfloaters/4` without them
+gets the levels of `residents ++ lower`. Until now the engine took the
+highest score still to be paired below the residents, so a level emptied
+by an earlier bracket, or held only by the bye, sent it one level further
+down. Evidence: 1.3.1 defines a scoregroup as the teams with the same
+score, not the teams still to be paired; 2.3.3 says "became or are
+upfloaters", which only makes sense of a fixed group; Held's round 7
+(p. 46) skips [C6] because the next scoregroup was emptied; and Gacrux
+reads it this way. The same reading is in `TeamCertificate` and in the
+independent `verify/` checker (weights `c0406-2026-2`; a certificate made
+on `-1` is refused by a `-2` checker, which is the point of the version),
+in `NaiveReference` and `ExactReference`, each written separately.
+
+**B. Floaters (1.5).** Only a PLAYED match against a team on a different
+score makes a floater; a forfeited match does not, and a bye never did.
+1.5 says "plays against"; the Basic Rules' "play against each other" is a
+game actually played; C.04.2 3.5 and Held's round 4 say an unplayed
+pairing may be repeated, i.e. it was not a meeting; Held's pairing-card
+legend reads "a previous round played as upfloater or upfloater's
+opponent"; Gacrux (`tiebreak.compute_flt`) and chesspairing count played
+matches only. In `TeamReplay`, `TeamGenerator`, and the test generators.
+
+**C. A played match.** A match is played when at least one board was
+played over the board, OR both teams scored on a board by forfeit (both
+turned up; each was short somewhere). It then has a colour (1.6.1, board
+1's scheduled colour), it is a meeting for [C1], it counts in 3.4.3, it
+can make a floater, and it is nobody's forfeit win for [C2]. Otherwise it
+is a forfeit won by the side that scored, or a double forfeit. One place
+decides it, `Tiebreaks.Team.from_trf/2`; `TeamReplay` takes its answer.
+The only match that moves is the unequal one - no game played, both
+sides scoring by forfeit, one more than the other - which was a forfeit
+win and loss and is now a played match won on game points. The level one
+was already played (tie-break reading T8). Its tie-break consequences are
+in `conformance-c07-tiebreaks.md`, T8.
+
+**D. TRF26 record 352.** The writer emits `352` (`WBWB...`, White on the
+odd boards: 1.6.1 and TRF-2026's "Colour sequence ... (implicit: number of
+boards)") whenever the tournament states its board count -
+`Trf.board_colours/1`, set by `TeamGenerator` and by the test generator
+in engine mode. The reader takes the board count from `352` when it is
+there (`Tiebreaks.Team.board_count/1`); without it the old inference from
+the games stands. A file in which every match was forfeited has no game to
+count boards from: with `352`, a winner of a whole-match forfeit scores 4.0
+on four boards; without it, 1.0
+(`test/fixtures/team_readings_2026_11/case_allforfeit.trf`).
+
+**Two known differences from Gacrux, kept.** [C6] stays graded where
+Gacrux reads it pass/fail at the parity minimum (`check_c6`). And the
+engine applies [C6] even when the chosen set takes no team from the
+following scoregroup, where Held's rounds 8 and 9 say [C6] "does not apply
+here because we are not picking upfloaters from the next scoregroup".
+Neither changed a round of Held's example. How often the second one
+matters was measured with `explain: true` on the validation generator's
+events (4-10 teams): of 289,132 rounds, [C6] decided 3,294 upfloater
+choices, and in 323 of them the chosen set held no team of the following
+scoregroup. On 2,702 rounds of 11-80 teams it decided 120, one of them so.
+Not all 323 would come out differently under Held's reading - often [C7]
+or 3.5.4 picks the same set - but those are the positions where the two
+readings can part.
+
+**Held's example, replayed.** `test/ainalrami/team_held_example_test.exs`
+rebuilds every team's state before each of the nine rounds from Held's
+crosstable (round 1 on his provisional numbers 1-13, the three round-1
+half-point byes not yet numbered; later half- and zero-point byes passed
+as `absent:`; round 4's 8-15 a forfeit: no meeting, no colour, no float,
+15's forfeit win) and asks the engine for each round. All nine rounds give
+Held's pairing, his bye and his colours. Caveat: the example also passes
+with the previous [C6] reading; it does not reach a position where the two
+differ, so A rests on the text and on Held's own commentary, and on the
+hand-worked positions below.
+
+**Tests.** `test/ainalrami/team_readings_2026_11_test.exs`: for A, a whole
+round where the next level was emptied by an earlier bracket, one where
+its only team has the bye, and one where the candidate set empties it (no
+looking further down); for B, a forfeited match between different scores
+floats nobody while a played one floats both, and a both-sides-forfeit
+match on different scores floats both; for C, both sides scoring by
+forfeit with nothing played gives a played match with a colour and a
+meeting that bars nobody from the bye, one side only gives a forfeit; for
+D, the `352` round trip, the all-forfeit file with and without `352`, and
+a malformed `352` ignored. Mutation check: putting back the old [C6] level
+fails two A tests; letting a forfeited match float fails the B test (and
+one generated replay); dropping the "both scored" clause fails the C test
+and one B test.

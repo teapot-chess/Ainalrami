@@ -514,6 +514,19 @@ as TieBreakServer scores it. Before 2026-09-26 every such match was read
 as played, so a double forfeit was a drawn match worth a draw's match
 points to both.
 
+**Changed 2026-11-11 (0.56.0).** A match with no board played where BOTH
+teams scored on a board by forfeit is now a played match whatever the
+score - both teams turned up, each was short somewhere - won, drawn or
+lost on game points like any other (`docs/conformance-c0406-teams.md`,
+*Readings settled, 2026-11-11*). Only a match where one side scored
+nothing is a forfeit win and loss, and only there does `362`'s `A` give
+the loser's match points. The level case above was already read this way;
+what moves is the unequal one (say 2-1 on three boards, all by forfeit),
+which used to be a forfeit win and loss and now counts as played for the
+individual-view codes - Article 16's unplayed-round handling in BH, SB and
+their kin, DE, and codes that count games or wins played - while
+board-level codes, which read the boards, do not change.
+
 **Reading T9 - boards that meet crosswise.** Article 12 numbers boards as a
 team match does, board k against board k. In a Scheveningen or a
 Schiller-type event a team's players meet different boards of the other
