@@ -25,6 +25,7 @@ every known difference.
 | Team Swiss whole rounds (C.04.6), 4-10 teams | brute-force reference written from the regulation | seeds 1-860,000,000, 3,553,445,286 rounds (two runs) | 0 failures, 0 errors | [Team Swiss pairings](#team-swiss-pairings-c046) |
 | Team Swiss whole rounds, 11-80 teams | exact engine-independent reference | 2,000 seeds, 11,980 rounds | agrees; one 3.6 candidate-budget disagreement found and fixed (0.30.0) | [team-proof-large-fields.md](team-proof-large-fields.md) |
 | Team Swiss, no colour preferences (1.7) | brute-force reference | 30,000 seeds, 123,593 rounds | 0 disagreements | [conformance-c0406-teams.md](conformance-c0406-teams.md#no-colour-preferences-17-2026-09-27) |
+| Team Swiss, three engines (C.04.6) | Gacrux 1.11.65 and chesspairing | 385,453 rounds, 3,121,413 matches (0.56.0, 2026-11-11); 3,878,178 rounds on 0.51.0 before it | never the odd one out; identical to Gacrux except 14 rounds, all the graded [C6] reading | [Three engines on team rounds](#three-engines-on-team-rounds-2026-11) |
 | Individual tie-breaks (C.07) | FIDE's TieBreakServer, both directions | 50,060 tournaments (~29 million values) and 50,000 (49,987,100 values); random lists 10,000 each way | 0 unexplained | [Tie-breaks](#tie-breaks-c07-effective-1-march-2026-against-tiebreakserver) |
 | Individual tie-breaks | independent reference (`Ainalrami.TiebreakReference`) | 15,000 events, 8.3 million values; 5,000 events, 2,760,888 values after the team extension | 0 disagreements | [tiebreak-reference.md](tiebreak-reference.md) |
 | Team tie-breaks | TieBreakServer | 20,000 events: fixed list 1,290,920 values, random lists 352,388 values; Swiss, round robin, Scheveningen, Schiller, 3-10 boards | 0 unexplained; TieBreakServer findings F, G, H | [Team events, extended](#team-events-extended-2026-09-26) |
@@ -1960,6 +1961,64 @@ to `FIDE_TEAM_MP_GP` and the other codes without `TYPEA`/`TYPEB`: 30,000
 seeds, 123,593 rounds against the same brute-force reference, 0
 disagreements. Details in
 [conformance-c0406-teams.md](conformance-c0406-teams.md#no-colour-preferences-17-2026-09-27).
+
+### Three engines on team rounds (2026-11)
+
+Until November 2026 the team engine had only references written for it. Two
+other C.04.6 engines now exist: Gacrux (`pairingfideteam.py`, Otto Milvang,
+since July 2026) and chesspairing (Gert Nutterts, Go). The harness
+`test/ainalrami/team_three_way_test.exs` gives all three the same file,
+cut before the round, and compares who plays whom, the bye and the first
+team of every match.
+
+**First run, 2026-11-07 to 2026-11-10, Ainalrami 0.51.0.** Twelve axes
+(small, mid and large fields, forfeits, absences, withdrawals, line-ups
+out of roster order, 3-1-0, game points first, odd fields, eleven rounds):
+3,878,178 rounds, 31,332,796 matches, 125,292,362 boards. All three agreed
+on 3,717,421 rounds. Outside the forfeit axes Ainalrami and chesspairing
+never differed. The differences with Gacrux were named one by one, by
+running Gacrux again with a single reading replaced:
+
+| Cause | Rounds | What became of it |
+|---|---|---|
+| A forfeited match's game points only in the `330` | 138,874 | 0.53.0 writes them on the players' lines too |
+| [C6]'s following scoregroup after an emptied level | 9,295 | 0.56.0: Gacrux's reading adopted |
+| A forfeited match counted as a float | 3,517 | 0.56.0: Gacrux's reading adopted |
+| Several of the above at once | 6,796 | as above |
+| [C6] graded or pass/fail | 158 | kept: ours is the reading of Held's guide |
+| Unexplained | 1,714 | 1,578 held a match with no board played in which both teams scored by forfeit; 0.56.0 calls that a played match, as Gacrux does |
+| Gacrux stopped on the file | 265 | a match with no game on any line; none since 0.53.0 |
+
+The readings and the evidence for each are in
+[conformance-c0406-teams.md](conformance-c0406-teams.md). Mario Held's
+worked example (*Mastering the FIDE Team Pairing System*, FIDE TEC 2026) is
+replayed as a test since 0.56.0: all nine rounds give his pairing, bye and
+colours.
+
+**Second run, 2026-11-11, Ainalrami 0.56.0.** The same twelve axes for three
+hours on sixteen cores: 385,453 rounds, 3,121,413 matches, 12,471,716
+boards.
+
+| | Rounds |
+|---|---|
+| All three agree | 384,289 |
+| Ainalrami the odd one out | 0 |
+| Ainalrami and Gacrux differ | 14, every one the graded [C6] reading |
+| Ainalrami and Gacrux differ, unexplained | 0 |
+| chesspairing the odd one out | 1,150 |
+| All three differ | 2 |
+| Gacrux stopped on the file | 0 |
+
+chesspairing still reads [C6]'s following scoregroup the way this engine did
+before 0.56.0, and treats a match in which both teams forfeited boards and
+nothing was played as unplayed; the rounds inspected were one or the other.
+It runs with six local patches for team-mode defects found by the harness
+(listed in the harness's moduledoc).
+
+With 385,439 of 385,453 rounds identical to Gacrux and none unexplained, the
+rate of an unexplained difference is below 1 in 128,000 rounds at 95%
+confidence (rule of three). The fourteen are a difference of reading we
+keep on purpose, not an error on either side.
 
 ### The checker on team files
 
