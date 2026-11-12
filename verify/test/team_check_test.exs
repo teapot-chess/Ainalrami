@@ -37,6 +37,53 @@ defmodule AinalramiVerify.TeamCheckTest do
     end
   end
 
+  test "Baku: virtual match points on Group A, certified and checked on the pairing score" do
+    rounds =
+      for {input, _round} <- events(71..100, []),
+          input["round"] <= div(input["expected_rounds"] + 1, 2) do
+        n = input["teams"] |> Enum.map(& &1["tpn"]) |> Enum.max()
+        last = 2 * div(n + 3, 4)
+
+        value =
+          if input["round"] <= div(div(input["expected_rounds"] + 1, 2) + 1, 2),
+            do: 2.0,
+            else: 1.0
+
+        teams =
+          Enum.map(input["teams"], fn t ->
+            if t["tpn"] <= last, do: Map.put(t, "virtual_match_points", value), else: t
+          end)
+
+        accelerated = %{input | "teams" => teams}
+        {:ok, round} = Engine.team_pair(accelerated)
+        {accelerated, round}
+      end
+
+    assert length(rounds) > 40
+
+    for {input, round} <- rounds do
+      {text, cert} = certified(input, round)
+      assert TeamCheck.check(text, cert, Engine.team_output(round)) == :ok
+
+      # The same certificate does not pass for the round without them, when
+      # the virtual points changed the pairing.
+      plain = %{
+        input
+        | "teams" => Enum.map(input["teams"], &Map.delete(&1, "virtual_match_points"))
+      }
+
+      {:ok, unaccelerated} = Engine.team_pair(plain)
+
+      if unaccelerated.pairs != round.pairs or unaccelerated.bye != round.bye do
+        assert {:error, _} =
+                 TeamCheck.check(JSON.encode!(plain), %{
+                   cert
+                   | "input_sha256" => Certificate.sha256(JSON.encode!(plain))
+                 })
+      end
+    end
+  end
+
   describe "the checker is not a rubber stamp" do
     setup do
       [{input, round} | _] =

@@ -69,6 +69,15 @@ defmodule Ainalrami.TeamPairing.Team do
     * `:matches_played` - for the bye tie-break 3.4.3. Defaults to
       `length(colours)`; settable because a competition may count a
       forfeited match as played when this engine cannot know that.
+    * `:virtual_match_points` / `:virtual_game_points` - virtual points
+      for THIS round (C.04.7, the Baku Acceleration Method; TRF-2026
+      record `250`), default 0. They are added to the score of the same
+      name wherever the pairing reads a score - `score/2` and
+      `secondary_score/2` - and nowhere else: the real `:match_points` and
+      `:game_points` stay what the team scored, because the standings and
+      the tie-breaks never see virtual points. C.04.7 1.5 calls the sum the
+      *pairing score*. `Ainalrami.Acceleration.team_baku/3` works out
+      C.04.7's; `docs/team-baku.md` has the reading.
   """
 
   defstruct tpn: nil,
@@ -79,7 +88,9 @@ defmodule Ainalrami.TeamPairing.Team do
             had_pab?: false,
             won_by_forfeit?: false,
             floated_last_round?: false,
-            matches_played: nil
+            matches_played: nil,
+            virtual_match_points: 0.0,
+            virtual_game_points: 0.0
 
   @type colour :: :white | :black
   @type preference :: {:white | :black, :strong | :mild} | :none
@@ -93,7 +104,9 @@ defmodule Ainalrami.TeamPairing.Team do
           had_pab?: boolean(),
           won_by_forfeit?: boolean(),
           floated_last_round?: boolean(),
-          matches_played: non_neg_integer() | nil
+          matches_played: non_neg_integer() | nil,
+          virtual_match_points: number(),
+          virtual_game_points: number()
         }
 
   @doc "Whether these two teams have already met ([C1], 2.1.1)."
@@ -226,14 +239,33 @@ defmodule Ainalrami.TeamPairing.Team do
 
   `:match_points` (the 1.2.2 default) or `:game_points`.
   """
-  def score(%__MODULE__{} = team, :match_points), do: team.match_points
-  def score(%__MODULE__{} = team, :game_points), do: team.game_points
+  def score(%__MODULE__{} = team, :match_points),
+    do: plus(team.match_points, team.virtual_match_points)
+
+  def score(%__MODULE__{} = team, :game_points),
+    do: plus(team.game_points, team.virtual_game_points)
+
   def score(%__MODULE__{}, mode), do: raise_bad_mode(mode)
 
   @doc "The secondary score - the other one (1.2.1), used by 4.2.2."
-  def secondary_score(%__MODULE__{} = team, :match_points), do: team.game_points
-  def secondary_score(%__MODULE__{} = team, :game_points), do: team.match_points
+  def secondary_score(%__MODULE__{} = team, :match_points), do: score(team, :game_points)
+  def secondary_score(%__MODULE__{} = team, :game_points), do: score(team, :match_points)
   def secondary_score(%__MODULE__{}, mode), do: raise_bad_mode(mode)
+
+  @doc "Whether the team carries virtual points for this round (C.04.7)."
+  def accelerated?(%__MODULE__{} = team),
+    do: not zero?(team.virtual_match_points) or not zero?(team.virtual_game_points)
+
+  # Nothing is added when there is nothing to add, so a team without virtual
+  # points scores exactly what it did before they existed - an integer stays
+  # an integer, and `Enum.uniq([2, 2.0])` (which keeps both) never meets a
+  # 2.0 that used to be a 2.
+  defp plus(score, virtual) do
+    if zero?(virtual), do: score, else: score + virtual
+  end
+
+  defp zero?(nil), do: true
+  defp zero?(x), do: x == 0
 
   # 1.2.1 defines exactly two scores, so a third mode is a caller's mistake
   # and not a case to add. What it was NOT is a FunctionClauseError naming

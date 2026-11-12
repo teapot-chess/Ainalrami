@@ -434,7 +434,7 @@ Tournament Type Code Table defines it (`Ainalrami.TypeCode`):
 | `FIDE_DUTCH_2025`, `FIDE_DUTCH` (and the draft's `FIDE_DUTCH_2026`) | replayed |
 | `FIDE_DUTCH_2017`, or `FIDE_DUTCH` for an event that started (`042`) before 1 July 2025 | replayed, with a warning: the engine pairs the current C.04.3, not the 2017 edition |
 | `FIDE_DUTCH*_BAKU` | replayed with the virtual points the file gives (`XXA`/`250`); exit 2 when it gives none - the engine does not derive C.04.7's groups itself |
-| `FIDE_TEAM*` without `_BAKU` | replayed team against team (*Team events* below) |
+| `FIDE_TEAM*` | replayed team against team (*Team events* below); `_BAKU` with the virtual match points of its `250` records naming teams, exit 2 when it gives none (docs/team-baku.md) |
 | a team round robin (`BERGER_TEAM_ROUNDROBIN_Gn`, `FIDE_TEAM_ROUNDROBIN`, `FIDE_TEAM_DOUBLEROUNDROBIN`, ...) | compared with the Berger tables (C.05 Annex 1, `Ainalrami.Berger`), colours included, the table repeated `n` times with the colours reversed in every second cycle |
 | an individual round robin (`BERGER_ROUNDROBIN_Gn`, `BERGER_ROUNDROBIN`, `FIDE_ROUNDROBIN`, `BERGER_DOUBLEROUNDROBIN`, `FIDE_DOUBLEROUNDROBIN`) | compared with the Berger tables, colours included, players numbered by starting rank (`Ainalrami.RoundRobin`); `FIDE_DOUBLEROUNDROBIN` plays the first cycle's last two rounds in reverse order |
 | `CUSTOM_ROUNDROBIN`, `CUSTOM_TEAM_ROUNDROBIN` | exit 2: a round robin of the competition's own |
@@ -443,7 +443,7 @@ Tournament Type Code Table defines it (`Ainalrami.TypeCode`):
 | `FIDE_BURSTEIN`, `FIDE_BURSTEIN_BAKU` | replayed by the Burstein system (*The Burstein system* below): the seeding rounds by Dutch, as 1.6 says, the rest by C.04.4.2 |
 | `FIDE_DOUBLESWISS` (with or without `_BAKU`) | exit 2: Ainalrami pairs the Dutch, Dubov, Burstein and Lim systems only |
 | `CUSTOM_SWISS` with `XXO system lim` | replayed by the Lim system (*The Lim system* below); TRF26 has no code for Lim |
-| `CUSTOM_*`, `FIDE_TEAM*_BAKU` | exit 2: a system of the competition's own; the team engine has no acceleration |
+| `CUSTOM_*` | exit 2: a system of the competition's own |
 | none, or one off the table (said so) | the `092` type (a round robin - a team one when its games are team matches throughout, else individual - played as many times as its rounds need; a Scheveningen, Schiller or knockout exits 2), else the games: team matches throughout make a team Swiss, anything else the Dutch system |
 
 When the file carries a tie-break list (`212`, or `202` after the score)
@@ -560,6 +560,7 @@ to the library's for each one. A flag is laid over what the file says:
 | `--soft-pairs=2,9,12@3-5` | `soft_pairs:` | a soft group can be limited to rounds the same way |
 | `--acceleration=baku` | players' `:accelerations` | C.04.7's virtual points worked out here (`Ainalrami.Acceleration`): Group A the top `2 x ceil(n/4)`, `ceil(R/2)` accelerated rounds, the first half of them a point and the rest a half. For a file with no `XXA`/`250`; needs the round count |
 | `--baku-group-a=N` | | Group A's last starting rank, for a field that grew after round 1 (the group does not) |
+| `--acceleration=baku` on a team Swiss | teams' `:virtual_match_points` | C.04.7 over the teams by number, in match points: a win's worth, then a draw's, for the top `2 x ceil(n/4)` teams (`--baku-group-a=N` names the last one). Refused on game points (C.04.7, Example 2) and on a scale where a win is not two draws (1.1). docs/team-baku.md has what is FIDE's and what is ours |
 | `--virtual-points=1-10:1,1,0.5/11:0.5` | players' `:accelerations` | any other table: `RANKS:` one value per round. Not C.04.7, and stderr says so |
 | `--half-bye=3,7` `--zero-bye=12` `--full-bye=20` | a bye in the player's games | (`-p`, `-x`) byes asked for in the round being paired, as a `240` record says them; a zero-point one is an absence |
 | `--cascade-order` | `cascade_order: true` | (`-p`) boards in the order the brackets were paired instead of C.04.2 3.6's |
