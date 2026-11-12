@@ -220,6 +220,7 @@ defmodule Ainalrami.WeightedMatching do
     state
     |> release(u)
     |> store_weight(u, v, w2)
+    |> forget_around([v])
   end
 
   @doc """
@@ -233,6 +234,8 @@ defmodule Ainalrami.WeightedMatching do
     trivial? = top(state, u) == u and top(state, v) == v
 
     if trivial? and Map.get(state.mate, u) == v and Map.get(state.mate, v) == u do
+      near = Map.keys(Map.get(state.weight, u, %{})) ++ Map.keys(Map.get(state.weight, v, %{}))
+      state = forget_around(state, near)
       weight = state.weight |> keep_only(u, v) |> keep_only(v, u)
       {:ok, %{state | weight: weight}}
     else
@@ -310,7 +313,8 @@ defmodule Ainalrami.WeightedMatching do
         parent_of: %{},
         links: %{},
         bases: %{},
-        members: %{}
+        members: %{},
+        bcache: %{}
     }
   end
 
@@ -327,7 +331,8 @@ defmodule Ainalrami.WeightedMatching do
             {u, Map.new(row, fn {v, w2} -> {v, k * w2} end)}
           end),
         dual: Map.new(state.dual, fn {v, y} -> {v, k * y} end),
-        max_w: k * state.max_w
+        max_w: k * state.max_w,
+        bcache: %{}
     }
   end
 
@@ -503,7 +508,10 @@ defmodule Ainalrami.WeightedMatching do
       bases: %{},
       # Per blossom: every vertex in it.
       members: %{},
-      next_blossom_id: n
+      next_blossom_id: n,
+      # Per blossom, what its vertices offer outside it (`offers_of/3`),
+      # kept while the blossom and the duals inside it stand.
+      bcache: %{}
     }
   end
 
@@ -768,14 +776,17 @@ defmodule Ainalrami.WeightedMatching do
       zlive: %{},
       entry: %{},
       best: %{},
-      alive: length(roots)
+      alive: length(roots),
+      bcache: st.bcache
     }
 
     t = Enum.reduce(roots, t, fn r, t -> mark_outer(st, t, top(st, r), r) end)
     next_event(st, t)
   end
 
-  defp next_event(st, %{alive: 0}), do: st
+  defp next_event(st, %{alive: 0} = t) do
+    %{st | bcache: Map.filter(t.bcache, fn {b, _} -> is_map_key(st.children, b) end)}
+  end
 
   defp next_event(st, t) do
     if t.heap == nil do
@@ -942,14 +953,17 @@ defmodule Ainalrami.WeightedMatching do
 
     # The formerly inner vertices turn outer: new duals first, then their
     # rows, so every scan sees the final labels.
-    turning = Enum.filter(vs, fn v -> match?({:in, _}, Map.get(t.live, v)) end)
+    turning =
+      Enum.filter(kids, fn c -> match?({:in, _}, Map.get(t.live, hd(vertices(st, c)))) end)
 
     t =
-      Enum.reduce(turning, t, fn v, t ->
-        %{t | live: Map.put(t.live, v, {:out, y_of(st, t, v) + t.d})}
+      Enum.reduce(turning, t, fn c, t ->
+        Enum.reduce(vertices(st, c), t, fn v, t ->
+          %{t | live: Map.put(t.live, v, {:out, y_of(st, t, v) + t.d})}
+        end)
       end)
 
-    t = Enum.reduce(turning, t, &scan_outer(st, &2, &1))
+    t = Enum.reduce(turning, t, &offer_from(st, &2, &1))
     next_event(st, t)
   end
 
@@ -1033,11 +1047,11 @@ defmodule Ainalrami.WeightedMatching do
               %{t | live: Map.put(t.live, v, {:out, y_of(st, t, v) + t.d})}
             end)
 
-          {t, vs ++ outer_vs}
+          {t, [c | outer_vs]}
         end
       end)
 
-    t = Enum.reduce(outer_vs, t, &scan_outer(st, &2, &1))
+    t = Enum.reduce(outer_vs, t, &offer_from(st, &2, &1))
     t = Enum.reduce(freed, t, &scan_freed(st, &2, &1))
     next_event(st, t)
   end
@@ -1135,7 +1149,7 @@ defmodule Ainalrami.WeightedMatching do
         %{t | live: Map.put(t.live, v, {:out, y_of(st, t, v) + t.d})}
       end)
 
-    Enum.reduce(vs, t, &scan_outer(st, &2, &1))
+    offer_from(st, t, b)
   end
 
   defp mark_inner(st, t, b, entry, r) do
@@ -1216,6 +1230,127 @@ defmodule Ainalrami.WeightedMatching do
               offer_row(rest, s, ts, c, top, dual, label, live, heap, Map.put(best, x, {k, s}))
           end
       end
+    end
+  end
+
+  # Whatever has just turned outer as a whole (`c`, every vertex of it at
+  # `{:out, _}`) offers its edges: a vertex scans its row, a blossom
+  # offers from its summary.
+  defp offer_from(st, t, c) when c < st.n, do: scan_outer(st, t, c)
+
+  defp offer_from(st, t, b) do
+    {{v0, rel, {low, vlow}}, t} = offers_of(st, t, b)
+    {:out, c0} = :erlang.map_get(v0, t.live)
+
+    {heap, best} =
+      offer_summary(
+        :maps.to_list(rel),
+        c0,
+        top(st, v0),
+        st.in_blossom,
+        st.dual,
+        t.label,
+        t.live,
+        push(t.heap, {2 * (c0 + low), @floor, vlow, 0}),
+        t.best
+      )
+
+    %{t | heap: heap, best: best}
+  end
+
+  # A blossom's summary: every vertex's dual moves with every other's while
+  # the blossom stands, so measured against one member `v0` they keep their
+  # differences, and per neighbour `x` outside it only the member with the
+  # least `(y[v] - y[v0]) - w(v, x)` can ever be the edge taken into `x`
+  # (lowest member on a tie, as the queue orders events); likewise only the
+  # member with the least dual can floor first. `{v0, %{x => {rel, v}},
+  # {low, v}}`, built from one scan of the rows and reused every time the
+  # blossom turns outer again, which on a large field is often: a blossom
+  # of a hundred vertices that keeps being reached would otherwise have its
+  # whole rows walked each time. Dropped when the blossom is taken apart,
+  # when an edge at one of its vertices changes, and on `install/3` and
+  # `scale/2`.
+  defp offers_of(st, t, b) do
+    case t.bcache do
+      %{^b => summary} ->
+        {summary, t}
+
+      _ ->
+        [v0 | _] = vs = vertices(st, b)
+        y0 = y_of(st, t, v0)
+
+        {rel, low} =
+          Enum.reduce(vs, {%{}, nil}, fn v, {rel, low} ->
+            dv = y_of(st, t, v) - y0
+            low = if low == nil or {dv, v} < low, do: {dv, v}, else: low
+            {least_edges(:maps.to_list(Map.get(st.weight, v, %{})), dv, v, rel), low}
+          end)
+
+        summary = {v0, Map.drop(rel, vs), low}
+        {summary, %{t | bcache: Map.put(t.bcache, b, summary)}}
+    end
+  end
+
+  defp least_edges([], _dv, _v, rel), do: rel
+
+  defp least_edges([{x, w2} | rest], dv, v, rel) do
+    r = dv - w2
+
+    case rel do
+      %{^x => old} when old <= {r, v} -> least_edges(rest, dv, v, rel)
+      _ -> least_edges(rest, dv, v, Map.put(rel, x, {r, v}))
+    end
+  end
+
+  # `offer_row/10` for a summary: the same events, one per neighbour.
+  defp offer_summary([], _c0, _tb, _top, _dual, _label, _live, heap, best), do: {heap, best}
+
+  defp offer_summary([{x, {r, v}} | rest], c0, tb, top, dual, label, live, heap, best) do
+    tx = :erlang.map_get(x, top)
+
+    if tx == tb do
+      offer_summary(rest, c0, tb, top, dual, label, live, heap, best)
+    else
+      case label do
+        %{^tx => :outer} ->
+          {:out, cx} = :erlang.map_get(x, live)
+          k = c0 + r + cx
+          ev = if v < x, do: {k, @shrink, v, x}, else: {k, @shrink, x, v}
+          offer_summary(rest, c0, tb, top, dual, label, live, push(heap, ev), best)
+
+        %{^tx => :inner} ->
+          offer_summary(rest, c0, tb, top, dual, label, live, heap, best)
+
+        _ ->
+          k = 2 * (c0 + r + :erlang.map_get(x, dual))
+
+          case best do
+            %{^x => b} when b <= {k, v} ->
+              offer_summary(rest, c0, tb, top, dual, label, live, heap, best)
+
+            _ ->
+              heap = push(heap, {k, @grow, x, v})
+              offer_summary(rest, c0, tb, top, dual, label, live, heap, Map.put(best, x, {k, v}))
+          end
+      end
+    end
+  end
+
+  # The summaries of every blossom around any of `vs`, dropped: an edge at
+  # one of them is about to change.
+  defp forget_around(state, vs) do
+    bcache =
+      Enum.reduce(vs, state.bcache, fn v, acc ->
+        if map_size(acc) == 0, do: acc, else: forget_up(state.parent_of, v, acc)
+      end)
+
+    %{state | bcache: bcache}
+  end
+
+  defp forget_up(parent_of, v, acc) do
+    case parent_of do
+      %{^v => b} -> forget_up(parent_of, b, Map.delete(acc, b))
+      _ -> acc
     end
   end
 
@@ -1421,7 +1556,8 @@ defmodule Ainalrami.WeightedMatching do
         links: Map.delete(st.links, b),
         bases: Map.delete(st.bases, b),
         members: Map.delete(st.members, b),
-        parent_of: Map.drop(st.parent_of, kids)
+        parent_of: Map.drop(st.parent_of, kids),
+        bcache: Map.delete(st.bcache, b)
     }
   end
 
