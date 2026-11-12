@@ -649,10 +649,11 @@ one build after the other.
 
 * `bench/scale.exs` (`SCALE_REF=v0.58.0`, 100, 400, 600 and 10,000
   players, seven rounds): 28 of 28 rounds identical.
-* `tools/perf_diff.exs` on the full standing corpus (small, flags, large,
-  early) on the VM, old against new: every round identical apart from the
-  one `f_strand` round described under "Ties" below. Locally, the
-  `l_300_600` and `e_350_600_r2` slices also matched round for round.
+* `tools/perf_diff.exs`, the full standing corpus on the VM, old against
+  new. On default settings every round was identical: small 370,781,
+  large 5,497, early 1,980, and `f_nofast` (the reference path on small
+  fields) 26,120. The two other `flags` axes switch on non-default
+  settings and differ; see "Ties" below.
 * `tools/matching_lockstep.exs` against v0.58.0: every solve at the
   reference's weight, and every state the new module claims is optimal
   checked against an LP certificate built from `proof_export/1`, not from
@@ -662,17 +663,29 @@ one build after the other.
 
 ### Ties
 
-Where a graph has several maximum-weight matchings, the two modules do not
-always return the same one. The lockstep counts it: about 84% of solves
-return the same pairs and the rest return a different optimum of the same
-weight. That costs nothing because of how the engine weights its edges:
-each criterion sits in its own band, and the ranks and nearness are packed
-in below them, so two different pairings of the field never weigh the same.
-The one caller whose weights can tie is `repair_completion/3`, which fills
-the round when a strand repair has failed. Its five-band weights say in
-their own comment that a tie there is broken by the matcher. It runs only
-under fault injection (`AINALRAMI_FORCE_STRAND=1`), and it accounts for
-the corpus's only differing round: `f_strand` seed 5100002, round 6.
+When a graph has several maximum-weight matchings, the two modules often
+return different ones. In the lockstep about 84% of solves return the same
+pairs. Inside the engine, ties are everywhere: on the `f_completion` axis
+alone, about 200,000 solves returned a different matching of equal weight
+from a cold solve of the same graph by the 0.58.0 module, at nearly every
+call site. On default settings the engine's answers do not depend on that
+choice, and the default corpus above came back identical. Two settings
+that are not the default let it through:
+
+| axis | setting | tournaments that differ | rounds |
+|---|---|---:|---:|
+| `f_strand` | `AINALRAMI_FORCE_STRAND=1`: fault injection that strands a tenth of rounds so that `repair_completion/3` gets exercised | 279 of 3,000 | 1,157 differ, 8 present on one side only |
+| `f_completion` | `AINALRAMI_COMPLETION=eligibility`: an experimental reading of the completion rung | 22 of 2,000 | 44 differ |
+
+`repair_completion/3`'s five-band weights tie, and its own comment says
+the matcher breaks the tie. Both axes were then rerun with every solve
+checked twice: once against the new state's LP certificate, and once
+against the weight of the 0.58.0 module's matching on the same graph.
+Every solve carried a valid certificate. In 524,559 of them the 0.58.0
+module picked a different matching, and every time it weighed exactly the
+same. These rounds have different optima, not wrong ones. On
+these two settings, which optimum the engine reports has always been the
+matcher's choice.
 
 ### Speed
 
