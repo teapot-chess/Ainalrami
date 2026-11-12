@@ -8159,74 +8159,58 @@ defmodule Ainalrami.Pairing do
     end
   end
 
-  # Section 3 of docs/dutch-cascade.md as data: every rung after the
-  # completion rung, most significant first, as `{label, span, scope,
-  # value}`. A rung is scored only where its scope holds and is zero
-  # elsewhere:
+  # Section 3 of docs/dutch-cascade.md, rung by rung: every rung after the
+  # completion rung, most significant first, as `{label, value, span}`. A
+  # rung is scored only where its scope holds and is zero elsewhere: C6, C7
+  # and C10-C21 for a pair inside the bracket (reach 0); C8 for a pair whose
+  # lower player is in the next score group (reach 1) - C8 looks one bracket
+  # down and no further (reading 5), so deeper groups stay visible to the
+  # matcher and score nothing here; C9 where the bracket's C9 gate is open
+  # (section 6).
   #
-  #   :bracket  both players in the bracket (reach 0)
-  #   :next     the lower player in the next score group (reach 1) - C8
-  #             looks one bracket down and no further (reading 5); deeper
-  #             groups stay visible to the matcher and score nothing here
-  #   :c9       the bracket's C9 gate is open (section 6)
+  # A span is the rung's radix: `s` (the field size plus one) for a count of
+  # pairs, `place_span` for a score place, `2s` for C14 and C16, whose values
+  # reach two, `s^2` for C9's sum of two ranks.
   #
-  # A span is the rung's radix: `:count` (the field size plus one) for a
-  # value that is a count of pairs, `:place` for a score place, `:double`
-  # for C14 and C16, whose values reach two, `:square` for C9's sum of two
-  # ranks.
-  @ladder [
-    {"C6 pairs in bracket", :count, :bracket, :one},
-    {"C7 scores paired", :place, :bracket, :place},
-    {"C8 pairs next bracket", :count, :next, :one},
-    {"C8 scores next bracket", :place, :next, :place},
-    {"C9 bye unplayed games", :square, :c9, :c9},
-    {"C10 topscorer colour diff", :count, :bracket, 0},
-    {"C11 topscorer same colour x3", :count, :bracket, 1},
-    {"C12 colour preference", :count, :bracket, 2},
-    {"C13 strong colour preference", :count, :bracket, 3},
-    {"C14 downfloat repeat r-1", :double, :bracket, 4},
-    {"C15 upfloat repeat r-1", :count, :bracket, 5},
-    {"C16 downfloat repeat r-2", :double, :bracket, 6},
-    {"C17 upfloat repeat r-2", :count, :bracket, 7},
-    {"C18 downfloat scores r-1", :place, :bracket, 8},
-    {"C19 upfloat scores r-1", :place, :bracket, 9},
-    {"C20 downfloat scores r-2", :place, :bracket, 10},
-    {"C21 upfloat scores r-2", :place, :bracket, 11}
-  ]
-
-  # The pair's rungs, labelled, `a` the better placed. One definition
-  # serves the matcher's weights (folded by `bracket_edge_weight/8`, read
-  # by position in `outside_layout/2`) and `explain_round/3`, which names
-  # the rung two pairings part company on.
+  # One definition serves the matcher's weights (folded by
+  # `bracket_edge_weight/8`, read by position in `outside_layout/2`) and
+  # `explain_round/3`, which names the rung two pairings part company on.
+  # Written out rather than folded over a table: it runs once per edge.
   defp ladder_rungs(a, b, reach, ctx, bands, single_bye?) do
     s = bands.count_span
+    p = bands.place_span
     place = Map.fetch!(bands.places, a.points)
-    scored = %{bracket: reach == 0, next: reach == 1, c9: single_bye?}
+    {c6, c7} = if reach == 0, do: {1, place}, else: {0, 0}
+    {c8, c8_place} = if reach == 1, do: {1, place}, else: {0, 0}
+    c9 = if single_bye?, do: c9_rank(a, b, ctx), else: 0
+
     # C10-C21, computed only for a pair inside the bracket - most of a large
     # field's pairs are not, and score zero on every one of them.
-    quality = if reach == 0, do: quality_values(a, b, bands)
+    {c10, c11, c12, c13, c14, c15, c16, c17, c18, c19, c20, c21} =
+      if reach == 0, do: quality_values(a, b, bands), else: {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}
 
-    rungs =
-      for {label, span, scope, value} <- @ladder do
-        v =
-          cond do
-            not Map.fetch!(scored, scope) -> 0
-            value == :one -> 1
-            value == :place -> place
-            value == :c9 -> c9_rank(a, b, ctx)
-            true -> elem(quality, value)
-          end
-
-        {label, v, rung_span(span, s, bands)}
-      end
-
-    [completion_rung(a, b, ctx, s) | rungs] ++ eligibility_mode_rung(s)
+    [
+      completion_rung(a, b, ctx, s),
+      {"C6 pairs in bracket", c6, s},
+      {"C7 scores paired", c7, p},
+      {"C8 pairs next bracket", c8, s},
+      {"C8 scores next bracket", c8_place, p},
+      {"C9 bye unplayed games", c9, s * s},
+      {"C10 topscorer colour diff", c10, s},
+      {"C11 topscorer same colour x3", c11, s},
+      {"C12 colour preference", c12, s},
+      {"C13 strong colour preference", c13, s},
+      {"C14 downfloat repeat r-1", c14, 2 * s},
+      {"C15 upfloat repeat r-1", c15, s},
+      {"C16 downfloat repeat r-2", c16, 2 * s},
+      {"C17 upfloat repeat r-2", c17, s},
+      {"C18 downfloat scores r-1", c18, p},
+      {"C19 upfloat scores r-1", c19, p},
+      {"C20 downfloat scores r-2", c20, p},
+      {"C21 upfloat scores r-2", c21, p}
+      | eligibility_mode_rung(s)
+    ]
   end
-
-  defp rung_span(:count, s, _bands), do: s
-  defp rung_span(:double, s, _bands), do: 2 * s
-  defp rung_span(:square, s, _bands), do: s * s
-  defp rung_span(:place, _s, bands), do: bands.place_span
 
   # C10-C21 for a pair inside the bracket, in ladder order.
   defp quality_values(a, b, bands) do
