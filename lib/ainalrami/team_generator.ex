@@ -96,8 +96,12 @@ defmodule Ainalrami.TeamGenerator do
   `generate/1` with the generator's own record: `%{text:, seed:, system:,
   teams:, boards:, planned:, rounds:, pairings:}`, `pairings` mapping each
   round to `%{matches: [{white, black}], bye:, lineups: %{team => [rank |
-  nil]}}` - the pairing as the engine (or the Berger table) gave it and
-  each paired team's boards.
+  nil]}, absent: [team]}` - the pairing as the engine (or the Berger table)
+  gave it, each paired team's boards, and the teams that announced before
+  the pairing that they would sit the round out (a requested half-point
+  bye not among them). In a round robin such a team is still paired, and
+  its forfeit then overwrites the announcement on its players' lines: a
+  file cut back to before the round has to put the `Z` back.
   """
   def run(opts \\ []) do
     seed = Keyword.get_lazy(opts, :seed, &Ainalrami.Generator.fresh_seed/0)
@@ -355,6 +359,7 @@ defmodule Ainalrami.TeamGenerator do
     present = Enum.reject(1..ctx.teams, &(&1 in absent_teams))
     half_byes = draw_half_byes(present, r, ctx)
     present = present -- half_byes
+    sat_out = Enum.sort(absent_teams)
     absent_teams = Enum.sort(absent_teams ++ half_byes)
     absent_players = draw_absent_players(present, ctx)
 
@@ -444,7 +449,8 @@ defmodule Ainalrami.TeamGenerator do
                  bye: if(ctx.system == :swiss, do: bye),
                  free: if(ctx.system == :round_robin, do: bye),
                  half_byes: half_byes,
-                 lineups: lineups
+                 lineups: lineups,
+                 absent: sat_out
                })
          }}
 
