@@ -1283,15 +1283,17 @@ under the [Microsoft Reference Source License](LICENSE) (Ms-RSL). You may read
 it; you may not run, copy, modify or distribute it. Versions published before
 2026-11-07 keep the licence they were published under.
 
-One part is not ours to relicense: parts of this engine are derived
-from [bbpPairings](https://github.com/BieremaBoyzProgramming/bbpPairings),
-which is Apache License 2.0. `Ainalrami.Pairing`'s bracket cascade is a
-stage-for-stage port of `dutch.cpp`, and `Ainalrami.WeightedMatching`'s control
-flow was read directly from bbpPairings' matching sources. No bbpPairings code
-is reproduced here - it is C++ and this is Elixir - but the algorithm and
-structure are theirs, so the attribution and the Apache text stay with the
-project ([NOTICE](NOTICE), [THIRD_PARTY](THIRD_PARTY)), and [NOTICE](NOTICE)
-spells out exactly which files are derived and what changed.
+One part is not ours to relicense: part of this engine is derived from
+[bbpPairings](https://github.com/BieremaBoyzProgramming/bbpPairings), which
+is Apache License 2.0. `Ainalrami.Pairing`'s bracket cascade is a
+stage-for-stage port of `dutch.cpp`. No bbpPairings code is reproduced here -
+it is C++ and this is Elixir - but the algorithm and structure of that part
+are theirs, so the attribution and the Apache text stay with the project
+([NOTICE](NOTICE), [THIRD_PARTY](THIRD_PARTY)), and [NOTICE](NOTICE) spells
+out exactly which files are derived and what changed.
+`Ainalrami.WeightedMatching`, the maximum-weight matcher, is not derived: it
+was written for this project from the published method (Edmonds 1965,
+Galil 1986).
 
 The vendored bbpPairings binaries and JaVaFo are covered separately; see
 [NOTICE](NOTICE).

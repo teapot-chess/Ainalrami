@@ -419,8 +419,7 @@ defmodule Ainalrami.WeightedMatchingOpsTest do
         :mate,
         :in_blossom,
         :children,
-        :parent_of,
-        :blossom_match
+        :parent_of
       ])
 
   # The largest weight a later write may carry, on the caller's scale.

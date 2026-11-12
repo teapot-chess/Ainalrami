@@ -355,7 +355,7 @@ two minimum-cost perfect matchings decide it - one for the least
 that top set for the first bottom sequence - with the criteria and the
 identifier packed into one integer cost (method:
 `docs/team-proof-large-fields.md` section 3). The matcher is the engine's
-own `Ainalrami.WeightedMatching` (bbpPairings' Galil/Micali/Gabow lineage).
+own `Ainalrami.WeightedMatching` (Edmonds' blossom method, Galil 1986).
 Before this the walk continued under a candidate budget (200,000) and a
 step budget, keeping the best found, and on large early-round brackets that
 was a legal round 3.6 does not choose. `:max_candidates` and `:max_steps`

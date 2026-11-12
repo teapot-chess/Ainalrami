@@ -14,7 +14,7 @@
 # measured time spent in `new/3` and `solve/1`, then each call site's
 # calls and milliseconds, then the same by site and size bucket with the
 # graph sizes, stages, grow steps and blossoms. AINALRAMI_WM_CAPTURE=<file>
-# also writes every call's inputs for tools/matching_replay.exs.
+# also writes every call's inputs, for replaying the matcher offline.
 
 alias Ainalrami.WeightedMatching.Profile
 

@@ -149,8 +149,10 @@ written in the `end` record, and the verifier no longer needs it.
   completability question it asks when. The proof certifies the answer
   to each question the engine asked, not that it asked the right ones.
 * **The tie-break.** Where several maximum-weight matchings exist, the
-  matcher returns the one its search finds first - bbpPairings' order,
-  held to a previous release call by call by `tools/matching_lockstep.exs`.
+  matcher returns the one its search finds first - a fixed order, and
+  the engine's answers are held to a previous release by the corpus
+  runs (`tools/perf_diff.exs`), the matcher's optimality call by call by
+  `tools/matching_lockstep.exs`.
   That choice is **trusted, not checked**; what the proof adds is the
   line between the two cases: a forced board could not have been
   otherwise, a board that is not forced was the tie-break's choice. In

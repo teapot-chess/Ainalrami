@@ -217,8 +217,8 @@ After the engine's 3.6 was made exact (2026-09-25, branch
 identifier order when it scores `{0,0,0}` (the walk's first candidate, as
 before), and otherwise the method of section 3: two minimum-cost perfect
 matchings with the criteria and the identifier packed into one integer
-cost. The engine's matcher is its own `Ainalrami.WeightedMatching` - the
-port of bbpPairings' Galil/Micali/Gabow code - so the proof's
+cost. The engine's matcher is its own `Ainalrami.WeightedMatching` - a
+primal-dual blossom matcher written from the literature - so the proof's
 `Ainalrami.TeamProof.Blossom` (van Rantwijk lineage) stays test-only and
 independent of it. `:max_candidates` / `:max_steps` are accepted and
 ignored; `exhaustive?` is always true. Timing, 80-team events (10 seeds,
