@@ -76,6 +76,13 @@ defmodule Ainalrami.WeightedMatching do
   1986) and are checked against the live state when taken, so a stale one
   is simply dropped.
 
+  An outer blossom offers one event per outside neighbour, not one per
+  edge. Its members' duals move together for as long as it stands, so the
+  cheapest edge from it into each outside vertex is worked out once and
+  kept until the blossom is opened or an edge at one of its vertices
+  changes; a large blossom that keeps being reached costs a pass over that
+  summary, not over all its members' rows.
+
   ## Which optimum
 
   When several matchings have the maximum weight, which one comes back -
@@ -1356,15 +1363,39 @@ defmodule Ainalrami.WeightedMatching do
 
   # A vertex just put back outside the tree: of its outer neighbours'
   # edges, the cheapest is offered at its new dual. Only that one could
-  # ever be taken, so it is the only one queued.
+  # ever be taken, so it is the only one queued. Whichever is shorter is
+  # walked, the row or the forest's labelled vertices: late in a forest
+  # few trees are left, and a dense row is mostly vertices outside them.
   defp scan_freed(st, t, x) do
     row = Map.get(st.weight, x, %{})
 
-    case cheapest_in(:maps.to_list(row), t.live, nil) do
+    cheapest =
+      if map_size(t.live) < map_size(row),
+        do: cheapest_of(:maps.to_list(t.live), row, nil),
+        else: cheapest_in(:maps.to_list(row), t.live, nil)
+
+    case cheapest do
       nil -> t
       {k, s} -> offer(t, x, 2 * (k + Map.fetch!(st.dual, x)), s)
     end
   end
+
+  # `cheapest_in/3` from the other side: the labelled vertices, looked up
+  # in the row.
+  defp cheapest_of([], _row, acc), do: acc
+
+  defp cheapest_of([{s, {:out, c}} | rest], row, acc) do
+    case row do
+      %{^s => w2} ->
+        v = {c - w2, s}
+        cheapest_of(rest, row, if(acc == nil or v < acc, do: v, else: acc))
+
+      _ ->
+        cheapest_of(rest, row, acc)
+    end
+  end
+
+  defp cheapest_of([_ | rest], row, acc), do: cheapest_of(rest, row, acc)
 
   # The least `c - w2` over outer neighbours, with its vertex; lowest
   # vertex on a tie, as the queue would order them.
