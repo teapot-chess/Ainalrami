@@ -204,7 +204,7 @@ defmodule Ainalrami.CLIParityErrorsTest do
 
     test "individual flags on a team file", %{team: team} do
       for mode <- ["-p", "-x", "-c"],
-          flag <- ~w(--forbidden=1,2 --virtual-points=1:1 --acceleration=baku) do
+          flag <- ~w(--forbidden=1,2 --virtual-points=1:1) do
         {_out, err, code} = cli([team, mode, flag])
         assert code == 1, "#{mode} #{flag}"
         assert err =~ "is for an individual tournament, not a team event", "#{mode} #{flag}"

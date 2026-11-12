@@ -109,9 +109,20 @@ defmodule Ainalrami.TeamCertificate do
       "floated_last_round" => t.floated_last_round?
     }
 
-    if is_integer(t.matches_played),
-      do: Map.put(base, "matches_played", t.matches_played),
-      else: base
+    base =
+      if is_integer(t.matches_played),
+        do: Map.put(base, "matches_played", t.matches_played),
+        else: base
+
+    # C.04.7's virtual points, only when there are any: a record of a round
+    # without them is byte for byte what it was before they existed.
+    base
+    |> put_nonzero("virtual_match_points", t.virtual_match_points)
+    |> put_nonzero("virtual_game_points", t.virtual_game_points)
+  end
+
+  defp put_nonzero(map, key, value) do
+    if value in [nil, 0, +0.0], do: map, else: Map.put(map, key, value)
   end
 
   defp groups_out(nil), do: []
@@ -160,7 +171,9 @@ defmodule Ainalrami.TeamCertificate do
       had_pab?: t["had_pab"] == true,
       won_by_forfeit?: t["won_by_forfeit"] == true,
       floated_last_round?: t["floated_last_round"] == true,
-      matches_played: t["matches_played"]
+      matches_played: t["matches_played"],
+      virtual_match_points: t["virtual_match_points"] || 0.0,
+      virtual_game_points: t["virtual_game_points"] || 0.0
     }
   end
 
@@ -261,7 +274,7 @@ defmodule Ainalrami.TeamCertificate do
             {t["tpn"],
              %{
                tpn: t["tpn"],
-               score: halves(t[primary]),
+               score: halves(t[primary]) + halves(t["virtual_" <> primary] || 0),
                opponents: MapSet.new(t["opponents"] || []),
                colours: colours,
                played: t["matches_played"] || length(colours),

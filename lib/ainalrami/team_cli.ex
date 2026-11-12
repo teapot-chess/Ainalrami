@@ -357,7 +357,10 @@ defmodule Ainalrami.TeamCLI do
           [
             t.had_pab? && "had bye",
             t.won_by_forfeit? && "won by forfeit",
-            t.floated_last_round? && "floated"
+            t.floated_last_round? && "floated",
+            Team.accelerated?(t) &&
+              "virtual +#{fmt(t.virtual_match_points)} MP" <>
+                if(t.virtual_game_points == 0, do: "", else: " +#{fmt(t.virtual_game_points)} GP")
           ]
           |> Enum.filter(& &1)
           |> Enum.join(", ")

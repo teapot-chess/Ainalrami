@@ -141,7 +141,7 @@ defmodule Ainalrami.CLI do
 
   # `-g` options that only an individual tournament has, and the ones only
   # a team event has (`--team=...`); each refused for the other.
-  @individual_generator_flags ~w(players bye-pct forbidden-pct acceleration ratings
+  @individual_generator_flags ~w(players bye-pct forbidden-pct ratings
                                  rating-range rating-top rating-step rating-sigma results
                                  full-bye-pct half-bye-pct zero-bye-pct forfeit-win-pct
                                  double-forfeit-pct odd-results-pct unset unset-chance groups system)
@@ -678,12 +678,15 @@ defmodule Ainalrami.CLI do
   end
 
   # Flags a file of the wrong kind cannot use.
-  @individual_only ~w(forbidden bye-exclude virtual-points baku-group-a acceleration judge
+  @individual_only ~w(forbidden bye-exclude virtual-points judge
                       bye-alternatives float-alternatives alternative-pairs max-candidates
                       cascade-order proof)
   @team_swiss_only ~w(team-type score secondary max-upfloater-sets explain-limit
                       team-forbidden team-soft-pairs)
   @bye_flags ~w(half-bye zero-bye full-bye absent-teams half-bye-teams)
+  # C.04.7, for a Swiss of either kind: an individual one's players, a team
+  # Swiss's teams (`with_acceleration_flags/2`). Never a round robin.
+  @baku_flags ~w(acceleration baku-group-a)
 
   defp with_input_flags(parsed, flags) do
     parsed
@@ -901,6 +904,9 @@ defmodule Ainalrami.CLI do
       last != nil and not baku? ->
         refuse("--baku-group-a needs --acceleration=baku")
 
+      baku? and Trf.team_event?(parsed) ->
+        with_team_baku(parsed, last, flags)
+
       (baku? or table != nil) and Acceleration.accelerated?(parsed.players) ->
         refuse(
           "the file already carries virtual points (XXA/250) - " <>
@@ -932,6 +938,73 @@ defmodule Ainalrami.CLI do
 
       true ->
         parsed
+    end
+  end
+
+  # `--acceleration=baku` on a team Swiss: C.04.7 over the teams, by team
+  # number, in match points (`Acceleration.team_baku_table/3`), written where
+  # a file's team `250` records go - `tournament[:team_accelerations]` - so
+  # `-p`, `-x` and `-c` read one place. Group A is cut from every team in
+  # the file; `--baku-group-a=N` names its last team when the field grew.
+  # A team round robin is left alone here and refused the flag later, with
+  # the round robin's own message.
+  defp with_team_baku(parsed, last, flags) do
+    t = parsed.tournament
+
+    swiss? =
+      case TypeCode.parse(t[:type_code] || "") do
+        {:ok, %{system: :team_swiss} = d} -> {:ok, d.score_mode}
+        {:ok, _other} -> :not_swiss
+        :error -> {:ok, :match_points}
+      end
+
+    case swiss? do
+      :not_swiss ->
+        parsed
+
+      {:ok, mode} ->
+        mode = word_option(flags, "score", %{"mp" => :match_points, "gp" => :game_points}) || mode
+
+        cond do
+          mode == :game_points ->
+            refuse(
+              "--acceleration=baku: C.04.7 (Example 2) - \"if gamepoints were the primary " <>
+                "score, the Baku Acceleration could not be used\""
+            )
+
+          t[:team_accelerations] not in [nil, %{}] ->
+            refuse(
+              "the file already carries virtual points (250 records naming teams) - " <>
+                "--acceleration is for a file without them"
+            )
+
+          t[:number_of_rounds] in [nil, 0] ->
+            refuse(
+              "--acceleration=baku needs the tournament's round count, and the file has no " <>
+                "142/XXR - add --rounds=N"
+            )
+
+          true ->
+            teams = TeamReplay.team_numbers(parsed)
+
+            if last != nil and last not in teams,
+              do: refuse("--baku-group-a names team #{last}, which the file does not have")
+
+            ps = t[:team_point_system] || %{}
+            points = {ps[:win] || 2.0, ps[:draw] || 1.0, ps[:loss] || 0.0}
+
+            table =
+              try do
+                Acceleration.team_baku_table(length(teams), t[:number_of_rounds],
+                  group_a_last: last,
+                  match_points: points
+                )
+              rescue
+                e in ArgumentError -> refuse(Exception.message(e))
+              end
+
+            put_in(parsed.tournament[:team_accelerations], table)
+        end
     end
   end
 
@@ -1237,11 +1310,11 @@ defmodule Ainalrami.CLI do
           do: "--#{flag} is for an individual tournament, not a team event"
 
       {:team_round_robin, _} ->
-        if flag = given(flags, @individual_only ++ @team_swiss_only),
+        if flag = given(flags, @individual_only ++ @team_swiss_only ++ @baku_flags),
           do: "--#{flag} is not for a team round robin"
 
       {:round_robin, _} ->
-        if flag = given(flags, @individual_only ++ @team_swiss_only),
+        if flag = given(flags, @individual_only ++ @team_swiss_only ++ @baku_flags),
           do: "--#{flag} is not for a round robin"
 
       _ ->
@@ -1696,7 +1769,8 @@ defmodule Ainalrami.CLI do
             out_of_order_pct: bounded_pct(option(flags, "out-of-order-pct"), "out-of-order-pct"),
             draw_rate: fraction_option(flags, "draw-rate"),
             tie_breaks: tie_breaks_option(flags),
-            match_format: team_match_format_option(flags)
+            match_format: team_match_format_option(flags),
+            baku: team_baku_generator_option(flags)
           ]
           |> Enum.reject(fn {_key, value} -> is_nil(value) end)
 
@@ -1713,6 +1787,42 @@ defmodule Ainalrami.CLI do
 
       flag ->
         usage_error("--#{flag} is an individual tournament's option, not a team event's")
+    end
+  end
+
+  # `--acceleration=baku` on `-g --team=swiss`: C.04.7 over the teams
+  # (`TeamGenerator`'s `:baku`), which fixes match points primary and 2/1/0.
+  # `random` is the individual generator's own axis and has no team reading.
+  defp team_baku_generator_option(flags) do
+    case text_option(flags, "acceleration") do
+      nil ->
+        nil
+
+      "baku" ->
+        cond do
+          team_system_option(flags) != :swiss ->
+            refuse("--acceleration=baku is for a team Swiss, not a team round robin")
+
+          word_option(flags, "score", %{"mp" => :match_points, "gp" => :game_points}) ==
+              :game_points ->
+            refuse(
+              "--acceleration=baku: C.04.7 (Example 2) - not with game points as the " <>
+                "primary score"
+            )
+
+          (points = match_points_option(flags)) != nil and
+              (elem(points, 0) != 2 * elem(points, 1) or elem(points, 2) != 0) ->
+            refuse(
+              "--acceleration=baku: C.04.7 1.1 needs a win worth two draws and a loss " <>
+                "worth nothing"
+            )
+
+          true ->
+            true
+        end
+
+      other ->
+        refuse("--acceleration=#{other} - a team Swiss is generated with baku or nothing")
     end
   end
 
@@ -2084,7 +2194,7 @@ defmodule Ainalrami.CLI do
               given(flags, ~w(force absent soft-pairs soft-position groups) ++ @individual_only) ->
             {:exit, usage_error("--#{flag} is for an individual tournament, not a team event")}
 
-          (flag = given(flags, ["half-bye-teams" | @team_swiss_only])) &&
+          (flag = given(flags, ["half-bye-teams" | @team_swiss_only ++ @baku_flags])) &&
               kind == :team_round_robin ->
             {:exit, usage_error("--#{flag} is for a team Swiss, not a team round robin")}
 
@@ -2123,7 +2233,7 @@ defmodule Ainalrami.CLI do
               given(
                 flags,
                 ~w(force absent lineups boards soft-pairs soft-position) ++
-                    @individual_only ++ @team_swiss_only ++ @bye_flags
+                    @individual_only ++ @team_swiss_only ++ @bye_flags ++ @baku_flags
               ) ->
             {:exit, usage_error("--#{flag} is not for a round robin")}
 
@@ -3978,6 +4088,11 @@ Round #{round_number} - #{boards} board#{plural(boards)} over " <>
       --team-type=a|b|none --score=mp|gp --secondary=yes|no
                            (-p, -x, -c, a team Swiss) in place of the 192 code's
       --rounds=N --initial-colour=white|black   as for an individual file
+      --acceleration=baku [--baku-group-a=N]   (-p, -x, -c, a team Swiss)
+                           C.04.7 over the teams by number, in match points
+                           (2 then 1 for Group A, 2 x ceil(n/4) teams), for a
+                           file with no 250 records naming teams; a
+                           FIDE_TEAM_..._BAKU file is replayed with its 250s
       --max-upfloater-sets=N   C.04.6 3.5's search budget (default 200000)
       --explain-limit=N    (-x) entries kept per list of the account (10)
       Keeping teams apart (a team Swiss; the organiser's rule, NOT C.04.6,
@@ -4008,6 +4123,8 @@ Round #{round_number} - #{boards} board#{plural(boards)} over " <>
       --forfeit-pct --match-forfeit-pct --absent-team-pct
       --absent-player-pct --out-of-order-pct --draw-rate
       --half-bye-team-pct  (a Swiss) teams taking a requested half-point bye
+      --acceleration=baku  (a Swiss) C.04.7, as 250 records naming teams; fixes
+                           match points primary and 2,1,0 (default off)
       --tie-breaks=MPTS,GPTS,EDE         212 and the teams' final ranks
     """)
   end

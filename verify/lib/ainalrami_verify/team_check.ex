@@ -110,8 +110,9 @@ defmodule AinalramiVerify.TeamCheck do
             {t["tpn"],
              %{
                tpn: t["tpn"],
-               primary: halves(t[primary]),
-               secondary: halves(t[secondary]),
+               # C.04.7 1.5: the pairing score, real plus virtual points.
+               primary: halves(t[primary]) + halves(t["virtual_" <> primary] || 0),
+               secondary: halves(t[secondary]) + halves(t["virtual_" <> secondary] || 0),
                opponents: MapSet.new(t["opponents"] || []),
                colours: colours,
                played: t["matches_played"] || length(colours),

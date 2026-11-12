@@ -78,7 +78,7 @@ defmodule Ainalrami.TeamGenerator do
   is how `ainalrami -p` knows, before the pairing, to leave it out.
   """
 
-  alias Ainalrami.{Berger, TeamPairing, Tiebreaks, Trf}
+  alias Ainalrami.{Acceleration, Berger, TeamPairing, Tiebreaks, Trf}
   alias Ainalrami.TeamPairing.Team
 
   @board_points %{"1" => 1.0, "=" => 0.5, "0" => 0.0, "+" => 1.0, "-" => 0.0}
@@ -217,9 +217,20 @@ defmodule Ainalrami.TeamGenerator do
     type = Keyword.get_lazy(opts, :type, fn -> Enum.random([:a, :a, :b, :none]) end)
     member!(type, [:a, :b, :none], :type)
 
+    # C.04.7 over the teams. Off unless asked for, and asking fixes the two
+    # things C.04.7 needs - match points primary (Example 2's footnote) and a
+    # win worth two draws (1.1) - instead of drawing them, so every seed
+    # recorded before it existed generates what it did.
+    baku? = Keyword.get(opts, :baku, false) == true
+
+    if baku? and system != :swiss,
+      do: raise(ArgumentError, ":baku is for a team Swiss")
+
     score_mode =
       Keyword.get_lazy(opts, :score_mode, fn ->
-        Enum.random([:match_points, :match_points, :match_points, :game_points])
+        if baku?,
+          do: :match_points,
+          else: Enum.random([:match_points, :match_points, :match_points, :game_points])
       end)
 
     member!(score_mode, [:match_points, :game_points], :score_mode)
@@ -232,7 +243,7 @@ defmodule Ainalrami.TeamGenerator do
 
     {w, d, l} =
       Keyword.get_lazy(opts, :match_points, fn ->
-        Enum.random([{2.0, 1.0, 0.0}, {3.0, 1.0, 0.0}])
+        if baku?, do: {2.0, 1.0, 0.0}, else: Enum.random([{2.0, 1.0, 0.0}, {3.0, 1.0, 0.0}])
       end)
       |> then(fn {w, d, l} -> {w * 1.0, d * 1.0, l * 1.0} end)
 
@@ -251,9 +262,26 @@ defmodule Ainalrami.TeamGenerator do
         :error -> if :rand.uniform(2) == 1, do: random_tie_breaks(system, score_mode), else: nil
       end
 
+    virtual =
+      if baku? do
+        if score_mode != :match_points do
+          raise ArgumentError,
+                ":baku - C.04.7 (Example 2): not with game points as the primary score"
+        end
+
+        Acceleration.team_baku_table(teams, max(planned, 1),
+          group_a_last: Keyword.get(opts, :baku_group_a),
+          match_points: {w, d, l}
+        )
+      else
+        %{}
+      end
+
     %{
       seed: seed,
       system: system,
+      baku?: baku?,
+      virtual: virtual,
       teams: teams,
       boards: boards,
       reserves: reserves,
@@ -346,7 +374,12 @@ defmodule Ainalrami.TeamGenerator do
         end
 
         # The scores the round was paired on: 1.5 compares them.
-        before = Map.new(matches |> Enum.flat_map(&Tuple.to_list/1), &{&1, score(st, &1, ctx)})
+        # With virtual points, the PAIRING scores (C.04.7 1.5).
+        before =
+          Map.new(
+            matches |> Enum.flat_map(&Tuple.to_list/1),
+            &{&1, score(st, &1, ctx) + virtual(ctx, &1, r)}
+          )
 
         st = %{st | played_now: MapSet.new()}
 
@@ -556,6 +589,7 @@ defmodule Ainalrami.TeamGenerator do
           floated_last_round?: MapSet.member?(st.floated, t)
         }
       end
+      |> Acceleration.team_virtual_points(ctx.virtual, r)
 
     absent = st.arrived |> MapSet.to_list() |> Enum.reject(&(&1 in present)) |> Enum.sort()
 
@@ -582,6 +616,13 @@ defmodule Ainalrami.TeamGenerator do
 
   defp score(st, t, %{score_mode: :game_points}), do: st.gp[t]
   defp score(st, t, _ctx), do: st.mp[t]
+
+  defp virtual(ctx, t, r) do
+    case ctx.virtual |> Map.get(t, []) |> Enum.at(r - 1) do
+      {mp, _gp} -> mp
+      nil -> 0.0
+    end
+  end
 
   # ---- one match ---------------------------------------------------------------
 
@@ -901,6 +942,7 @@ defmodule Ainalrami.TeamGenerator do
         }
       )
       |> put_if(st.orders != [], :board_orders, Enum.reverse(st.orders))
+      |> put_if(ctx.virtual != %{}, :team_accelerations, ctx.virtual)
       |> put_if(ctx.tie_breaks != nil, :standings_order, ctx.tie_breaks)
 
     teams =
@@ -968,7 +1010,7 @@ defmodule Ainalrami.TeamGenerator do
         {:game_points, false} -> "GP"
       end
 
-    "FIDE_TEAM_#{type}#{scores}"
+    "FIDE_TEAM_#{type}#{scores}#{if ctx.baku?, do: "_BAKU"}"
   end
 
   defp put_if(map, true, key, value), do: Map.put(map, key, value)

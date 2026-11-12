@@ -2005,7 +2005,56 @@ defmodule Ainalrami.Trf do
         |> render()
       end
 
-    colours ++ points ++ pab ++ forfeits ++ orders
+    colours ++ points ++ pab ++ forfeits ++ orders ++ team_acceleration_lines(t)
+  end
+
+  # A team event's `250`s: one line per run of consecutive teams with the
+  # same virtual points, per run of rounds on one value - for Baku, two
+  # lines, the shape of TRF-2026's own example. Match points in 5-8, game
+  # points in 10-13, each left blank when zero ("it may be empty
+  # (equivalent to 0.0)"), so a Baku line on match points carries no game
+  # points at all rather than a 0.0 a reader might take for a value.
+  defp team_acceleration_lines(t) do
+    (t[:team_accelerations] || %{})
+    |> Enum.reject(fn {_tpn, row} -> Enum.all?(row, &(&1 == {0.0, 0.0} or &1 == {0, 0})) end)
+    |> Enum.sort()
+    |> Enum.chunk_while(
+      [],
+      fn
+        entry, [] ->
+          {:cont, [entry]}
+
+        {tpn, row} = entry, [{prev, prev_row} | _] = chunk ->
+          if tpn == prev + 1 and row == prev_row,
+            do: {:cont, [entry | chunk]},
+            else: {:cont, Enum.reverse(chunk), [entry]}
+      end,
+      fn
+        [] -> {:cont, []}
+        chunk -> {:cont, Enum.reverse(chunk), []}
+      end
+    )
+    |> Enum.flat_map(fn [{first, row} | _] = chunk ->
+      {last, _} = List.last(chunk)
+
+      row
+      |> Enum.with_index(1)
+      |> Enum.chunk_by(fn {points, _round} -> points end)
+      |> Enum.reject(fn [{{mp, gp}, _} | _] -> mp == 0 and gp == 0 end)
+      |> Enum.map(fn [{{mp, gp}, first_round} | _] = run ->
+        {_, last_round} = List.last(run)
+
+        []
+        |> place({1, 3}, "250")
+        |> place({5, 8}, if(mp == 0, do: "", else: format_points(mp)), align: :right)
+        |> place({10, 13}, if(gp == 0, do: "", else: format_points(gp)), align: :right)
+        |> place({15, 17}, first_round, align: :right)
+        |> place({19, 21}, last_round, align: :right)
+        |> place({23, 26}, first, align: :right)
+        |> place({28, 31}, last, align: :right)
+        |> render()
+      end)
+    end)
   end
 
   # A team with a number is a TRF26 `310` record (layout in parse/1's doc);
@@ -2523,6 +2572,9 @@ defmodule Ainalrami.Trf do
 
           "XXZ" ->
             parse_xxz(acc, line)
+
+          "250" when team? ->
+            parse_team_250(acc, line)
 
           "250" ->
             parse_250(acc, line)
@@ -3245,6 +3297,70 @@ defmodule Ainalrami.Trf do
   # produces a complete, well-formed round paired on the wrong scores.
   # bbpPairings' own Baku pass measured that at 66.12% of rounds when
   # `XXA` was being dropped.
+  # `250` in a TEAM event (TRF-2026, "Accelerated Rounds (for both individual
+  # and team tournaments)"): the numbers in 23-26 and 28-31 are teams'
+  # pairing numbers, and the line may carry fictitious MATCH points (5-8),
+  # game points (10-13) or both - "at least one ... must differ by 0.0".
+  # Kept per team and round in `tournament[:team_accelerations]`, `%{tpn =>
+  # [{mp, gp}, ...]}`, and never attached to a player. As with players, a
+  # later line wins for the rounds it names. Which of the two numbers the
+  # pairing uses is the replay's question, not the reader's: see
+  # `Ainalrami.TeamReplay` and docs/team-baku.md.
+  defp parse_team_250(acc, line) do
+    if byte_size(line) < 31 do
+      raise ValidationError, message: "250 line is too short: #{line}"
+    end
+
+    points = fn cols, what ->
+      case read(line, cols) do
+        "" ->
+          0.0
+
+        text ->
+          case parse_float(text) do
+            value when is_float(value) and value >= 0 ->
+              value
+
+            _ ->
+              raise ValidationError, message: "250 line has unreadable #{what}: #{line}"
+          end
+      end
+    end
+
+    mp = points.({5, 9}, "match points")
+    gp = points.({10, 14}, "game points")
+
+    if mp == 0.0 and gp == 0.0 do
+      raise ValidationError,
+        message: "250 line gives no fictitious points, match or game: #{line}"
+    end
+
+    first_round = positive_field!(line, {15, 18}, line, "250", "first round number")
+    last_round = positive_field!(line, {19, 22}, line, "250", "last round number")
+    first_team = positive_field!(line, {23, 27}, line, "250", "first team number")
+    last_team = positive_field!(line, {28, 32}, line, "250", "last team number")
+
+    if first_round > last_round or first_team > last_team do
+      raise ValidationError, message: "250 line has an inverted range: #{line}"
+    end
+
+    table =
+      Enum.reduce(first_team..last_team, acc.tournament[:team_accelerations] || %{}, fn tpn,
+                                                                                        table ->
+        row = Map.get(table, tpn, [])
+        width = max(length(row), last_round)
+
+        row =
+          for r <- 1..width do
+            if r in first_round..last_round, do: {mp, gp}, else: Enum.at(row, r - 1, {0.0, 0.0})
+          end
+
+        Map.put(table, tpn, row)
+      end)
+
+    put_in(acc.tournament[:team_accelerations], table)
+  end
+
   defp parse_250(acc, line) do
     # Byte length, like every other column measurement in this module.
     if byte_size(line) < 31 do

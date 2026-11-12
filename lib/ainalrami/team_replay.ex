@@ -35,9 +35,7 @@ defmodule Ainalrami.TeamReplay do
     * everything else is `{:unreplayable, reason}`: Schiller and Scheveningen (predetermined, by rules FIDE has not yet
       defined), knockouts, the Double Swiss systems (`Ainalrami.CLI` sends a
       Dubov or Burstein file to `Ainalrami.Dubov` or `Ainalrami.Burstein`
-      before it gets here), every `CUSTOM_*` system, and
-      an accelerated team Swiss (`Ainalrami.TeamPairing` has no
-      acceleration).
+      before it gets here), and every `CUSTOM_*` system.
 
   With no `192` - or one that is not in the table - the `092` type is read
   for a round robin (a team round robin when the games show a team event,
@@ -65,6 +63,15 @@ defmodule Ainalrami.TeamReplay do
       (4.2.2); a single one - "secondary score ... not used".
     * `FIDE_TEAM` alone is `FIDE_TEAM_TYPEA_MP_GP`, and `FIDE_TEAM_BAKU`
       `FIDE_TEAM_TYPEA_MP_GP_BAKU`.
+    * `_BAKU` - C.04.7's acceleration: replayed with the virtual points of
+      the file's `250` records naming teams (`tournament[:team_accelerations]`),
+      added to each team's score for the pairing only (`settings.virtual`).
+      A `_BAKU` file without them is unreplayable - this checker does not
+      cut Group A itself unless `--acceleration=baku` asks. A file laid out
+      like TRF-2026's own example, the values in the game-points column, is
+      read as match points (docs/team-baku.md). A `250` in a team file
+      without `_BAKU` is applied all the same, as `XXA`/`250` are for an
+      individual one.
 
   A file with no usable `192` that the games show to be a team event is
   replayed with the C.04.6 defaults: Type A (1.7), match points primary and
@@ -138,7 +145,8 @@ defmodule Ainalrami.TeamReplay do
           score_mode: :match_points | :game_points,
           use_secondary?: boolean(),
           code: String.t() | nil,
-          unlisted_code: String.t() | nil
+          unlisted_code: String.t() | nil,
+          virtual: %{optional(pos_integer()) => [{number(), number()}]}
         }
 
   @defaults %{
@@ -146,7 +154,8 @@ defmodule Ainalrami.TeamReplay do
     score_mode: :match_points,
     use_secondary?: true,
     code: nil,
-    unlisted_code: nil
+    unlisted_code: nil,
+    virtual: %{}
   }
 
   # ---- which replay --------------------------------------------------------
@@ -215,10 +224,31 @@ defmodule Ainalrami.TeamReplay do
     end
   end
 
-  defp system_for(%{system: :team_swiss, baku?: true, code: code}, _parsed) do
-    {:unreplayable,
-     "#{code} is an accelerated team Swiss (Baku Acceleration Method), and the C.04.6 " <>
-       "engine has no acceleration"}
+  # An accelerated team Swiss (C.04.7 over C.04.6): replayed with the
+  # virtual points the file's `250` records give the teams, as the
+  # individual replay pairs with `XXA`/`250`. A file without them is
+  # refused rather than given groups this checker made up.
+  defp system_for(%{system: :team_swiss, baku?: true, score_mode: :game_points, code: code}, _),
+    do:
+      {:unreplayable,
+       "#{code} accelerates a team Swiss on game points, and C.04.7 (Example 2) says " <>
+         "that \"if gamepoints were the primary score, the Baku Acceleration could not " <>
+         "be used\""}
+
+  defp system_for(%{system: :team_swiss, baku?: true, code: code} = d, parsed) do
+    case system_for(Map.put(d, :baku?, false), parsed) do
+      {:team, %{virtual: virtual}} when virtual == %{} ->
+        {:unreplayable,
+         "#{code} is an accelerated team Swiss (Baku Acceleration Method, C.04.7) but the " <>
+           "file gives no virtual points (250 records naming teams), and this checker does " <>
+           "not derive the accelerated groups itself"}
+
+      {:team, settings} ->
+        {:team, Map.put(settings, :virtual, baku_virtual(parsed.tournament[:team_accelerations]))}
+
+      other ->
+        other
+    end
   end
 
   defp system_for(%{system: :team_swiss, code: code}, %{tournament: %{match_format: true}}) do
@@ -237,7 +267,8 @@ defmodule Ainalrami.TeamReplay do
          | type: d.colour_preferences,
            score_mode: d.score_mode,
            use_secondary?: d.use_secondary?,
-           code: code
+           code: code,
+           virtual: parsed.tournament[:team_accelerations] || %{}
        }}
     end
   end
@@ -316,6 +347,25 @@ defmodule Ainalrami.TeamReplay do
     end
   end
 
+  # The virtual points of a `_BAKU` team code, which the table defines only
+  # with match points primary. TRF-2026's own example of the method ("a 11
+  # round Swiss team tournament based on matchpoints") writes them in the
+  # GAME points column, `250 00.0 02.0 001 003 0001 0090`, under a field
+  # definition that puts match points in 5-8. A file laid out like the
+  # example - no `250` with match points, some with game points - is read
+  # the way the example means it: those values are the virtual MATCH points.
+  # Our reading, docs/team-baku.md. A file with match points in 5-8 is
+  # read as it is written.
+  defp baku_virtual(table) do
+    rows = Map.values(table)
+    mp? = Enum.any?(rows, fn row -> Enum.any?(row, fn {mp, _gp} -> mp != 0 end) end)
+
+    if mp?,
+      do: table,
+      else:
+        Map.new(table, fn {tpn, row} -> {tpn, Enum.map(row, fn {_mp, gp} -> {gp, 0.0} end)} end)
+  end
+
   defp accelerated?(player) do
     Enum.any?(player[:accelerations] || [], &(&1 != 0))
   end
@@ -351,7 +401,12 @@ defmodule Ainalrami.TeamReplay do
         {:unreplayable, "the file's type (092) is a knockout, which is not a Swiss"}
 
       team_structured?(parsed) ->
-        {:team, %{@defaults | unlisted_code: unlisted}}
+        {:team,
+         %{
+           @defaults
+           | unlisted_code: unlisted,
+             virtual: parsed.tournament[:team_accelerations] || %{}
+         }}
 
       true ->
         :individual
@@ -415,7 +470,12 @@ defmodule Ainalrami.TeamReplay do
           " (no 192: the C.04.6 defaults)"
       end
 
-    "C.04.6, #{type}, #{primary} primary, #{colours}#{source}"
+    accelerated =
+      if Map.get(s, :virtual, %{}) == %{},
+        do: "",
+        else: ", virtual points for #{map_size(s.virtual)} teams (C.04.7, 250)"
+
+    "C.04.6, #{type}, #{primary} primary, #{colours}#{accelerated}#{source}"
   end
 
   # Every round's matches are team against team - see the moduledoc.
@@ -721,8 +781,9 @@ defmodule Ainalrami.TeamReplay do
           matches_played: length(played),
           had_pab?: Enum.any?(earlier, &(&1.kind == :pab)),
           won_by_forfeit?: Enum.any?(earlier, &(&1.forfeit_win? or &1.full_bye?)),
-          floated_last_round?: floated?(history, team, round - 1, settings.score_mode)
+          floated_last_round?: floated?(history, team, round - 1, settings)
         }
+        |> with_virtual(settings, round)
       end
 
     absent =
@@ -732,6 +793,26 @@ defmodule Ainalrami.TeamReplay do
           do: team
 
     {teams, Enum.sort(absent)}
+  end
+
+  # A team's virtual points for `round` (`settings.virtual`, the file's `250`
+  # records), on the Team struct the engine reads them from.
+  defp with_virtual(%Team{} = team, settings, round) do
+    case settings |> Map.get(:virtual, %{}) |> Map.get(team.tpn, []) |> Enum.at(round - 1) do
+      {mp, gp} when mp != 0 or gp != 0 ->
+        %{team | virtual_match_points: mp * 1.0, virtual_game_points: gp * 1.0}
+
+      _ ->
+        team
+    end
+  end
+
+  defp virtual(settings, team, round, mode) do
+    case settings |> Map.get(:virtual, %{}) |> Map.get(team, []) |> Enum.at(round - 1) do
+      {mp, _gp} when mode == :match_points -> mp
+      {_mp, gp} -> gp
+      nil -> 0.0
+    end
   end
 
   defp earlier(rounds, round),
@@ -745,13 +826,24 @@ defmodule Ainalrami.TeamReplay do
   # it. A forfeited match makes nobody a floater (2026-11-11: 1.5 says
   # "plays against", and the Basic Rules' "play against each other" is a
   # game actually played); until then the pairing alone floated a team.
-  defp floated?(_history, _team, previous, _mode) when previous < 1, do: false
+  #
+  # With virtual points (C.04.7) the scores compared are the PAIRING scores
+  # that round was paired on - real plus that round's virtual points - since
+  # 1.5's "different score" is the one the scoregroups were made of (C.04.7
+  # 1.5). Our reading, docs/team-baku.md.
+  defp floated?(_history, _team, previous, _settings) when previous < 1, do: false
 
-  defp floated?(history, team, previous, mode) do
+  defp floated?(history, team, previous, settings) do
+    mode = settings.score_mode
+
     case history[team][previous] do
       %{kind: :match, played?: true, opponent: other} when is_map_key(history, other) ->
         key = if mode == :game_points, do: :gp, else: :mp
-        score = fn t -> total(earlier(history[t], previous), key) end
+
+        score = fn t ->
+          tidy(total(earlier(history[t], previous), key) + virtual(settings, t, previous, mode))
+        end
+
         score.(team) != score.(other)
 
       _ ->

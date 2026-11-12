@@ -99,6 +99,20 @@ defmodule Ainalrami.TeamPairing do
   A round that a group changed is not a C.04.6 round in the homologation
   sense: a checker replaying the file without the groups will not reproduce
   it, which is why the standalone checker replays with them.
+
+  ## Acceleration (C.04.7)
+
+  A team carrying `:virtual_match_points` (or `:virtual_game_points`) is
+  paired on its *pairing score* (C.04.7 1.5): real score plus virtual
+  points, everywhere this module reads a score - scoregroups, the bye's
+  3.4.2, upfloater profiles, score differences and 4.2's first team. The
+  engine takes them as data, one value per team for the round being paired,
+  exactly as the individual engine takes `:accelerations`; it does not
+  decide who is in Group A. `Ainalrami.Acceleration.team_baku/3` does, and
+  `docs/team-baku.md` says which parts of that are FIDE's text and which
+  are our reading. A team's `:floated_last_round?` is the host's, as
+  always - with acceleration, computed on the previous round's pairing
+  scores (the ones the engine paired it on).
   """
 
   alias Ainalrami.TeamPairing.{Bracket, Colour, Explanation, Field, Matching, Team}
@@ -195,6 +209,7 @@ defmodule Ainalrami.TeamPairing do
   """
   def pair_round(teams, opts \\ []) when is_list(teams) do
     with :ok <- validate_teams(teams),
+         teams = floats_when_accelerated(teams),
          {:ok, mode} <- validate_score_mode(Keyword.get(opts, :score_mode, :match_points)),
          :ok <- validate_type(Keyword.get(opts, :type, :a)),
          {:ok, absent} <- validate_absent(Keyword.get(opts, :absent, []), teams),
@@ -367,8 +382,33 @@ defmodule Ainalrami.TeamPairing do
     end
   end
 
-  defp valid_team?(%Team{tpn: tpn, match_points: mp, game_points: gp}),
-    do: is_integer(tpn) and tpn >= 1 and is_number(mp) and is_number(gp)
+  defp valid_team?(%Team{tpn: tpn, match_points: mp, game_points: gp} = team),
+    do:
+      is_integer(tpn) and tpn >= 1 and is_number(mp) and is_number(gp) and
+        virtual?(team.virtual_match_points) and virtual?(team.virtual_game_points)
+
+  defp virtual?(v), do: is_number(v) and v >= 0
+
+  # C.04.7 1.5's pairing score: real score plus virtual points (`Team.score/2`).
+  # Once any team carries virtual points every score in the round becomes a
+  # float, so a 4 and a 4.0 are one score level rather than two
+  # (`Enum.uniq/1` keeps both). A round without virtual points is passed
+  # through untouched - the same terms as before acceleration existed.
+  defp floats_when_accelerated(teams) do
+    if Enum.any?(teams, &Team.accelerated?/1) do
+      Enum.map(teams, fn t ->
+        %{
+          t
+          | match_points: t.match_points * 1.0,
+            game_points: t.game_points * 1.0,
+            virtual_match_points: t.virtual_match_points * 1.0,
+            virtual_game_points: t.virtual_game_points * 1.0
+        }
+      end)
+    else
+      teams
+    end
+  end
 
   defp duplicate_tpn(teams) do
     teams

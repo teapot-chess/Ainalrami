@@ -79,6 +79,7 @@ unless said otherwise).
 | `expected_rounds:` | the round count | `--rounds=N` **(new)** | `142` |
 | `absent:` | teams that arrived and sit this round out | `--absent-teams=2,5` **(new)** | every player of the team with the round recorded (`Z`/`H`/`F`), or a `240 Z` naming the team |
 | (not in the field; scored as a drawn match in later rounds) | a requested half-point bye (`teams.half_bye_rounds`) | `--half-bye-teams=2,5` **(0.57.0)** | `240 H` naming the TEAM, value `299 H` |
+| teams' `:virtual_match_points` - Baku (C.04.7) | `Acceleration.team_baku/3`: Group A by team number, `2 * ceil(n/4)`, frozen at round 1 (`baku_group_a_last`) | `--acceleration=baku`, `--baku-group-a=N` **(team Swiss, new)** | `250` naming teams, match points in 5-8 (docs/team-baku.md) |
 | `max_upfloater_sets:` | default | `--max-upfloater-sets=N` **(new)** | - |
 | `explain: true` | always | `-x` | - |
 | `explain_limit:` | default | `--explain-limit=N` **(new)** | - |
