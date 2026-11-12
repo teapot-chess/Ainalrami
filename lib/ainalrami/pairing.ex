@@ -3897,7 +3897,7 @@ defmodule Ainalrami.Pairing do
     st = new_bracket(:local, combined, m, sgb, nsgb, wsgb, wl, ctx, single_bye?) |> solve()
 
     if map_size(st.matching) == wl do
-      {:ok, st |> pair_by_filters() |> close_bracket()}
+      {:ok, st |> pair_by_filters() |> record_proof() |> close_bracket()}
     else
       :field
     end
@@ -4594,6 +4594,7 @@ defmodule Ainalrami.Pairing do
       |> solve()
       |> pair_by_filters()
       |> flush_live()
+      |> record_proof()
 
     {pairs, _, _, _} = result = close_bracket(st)
     graft_back(st)
@@ -5468,10 +5469,10 @@ defmodule Ainalrami.Pairing do
   #
   #   * filter 4.2: each MDP in turn stays inside if some optimum has it inside;
   #   * filter 4.3: each committed MDP takes the best-ranked partner an optimum
-  #     gives it (`prefer_high_opponents/2`'s addends);
+  #     gives it (`seat_values/2`);
   #   * filters 4.4-4.5: the remainder and its split are read, then the optima of
   #     the exchange weights kept (fewest exchanges, then the smallest sum of
-  #     the paired-down positions - `exchange_weight/4`);
+  #     the paired-down positions - `exchange_value/2`);
   #   * filter 4.6: from the bottom of S1 up, while exchanges are left, a player
   #     is exchanged if some optimum does not pair them down;
   #   * filter 4.7: from the top of S2 down, while more than one is left, a
@@ -8661,8 +8662,6 @@ defmodule Ainalrami.Pairing do
   # gate of the next bracket the score of every open player's tentative
   # partner over the bracket and its next group.
   defp close_bracket(st) do
-    if Ainalrami.Proof.recording?(), do: proof_read(st)
-
     arr = st.arr
     nsgb = st.nsgb
 
@@ -8719,23 +8718,26 @@ defmodule Ainalrami.Pairing do
     {pairs, carried, carried_members, tentative}
   end
 
-  ## ---------- dual shifts ----------
-
-  # The same move as 4.5's `weigh_exchanges/1`, for one player.
-  # `prefer_high_remainder/2` adds an addend to each of the player's edges,
-  # the largest to the highest-ranked opponent, and the solve that follows
-  # asks which partner the player gets. Raising the player's dual by the
-  # addend its CURRENT partner got keeps that pair tight, and leaves every
-  # other changed edge feasible exactly when no opponent with a larger
-  # addend is within reach -- `shift_and_set/3` checks that edge by edge
-  # and refuses otherwise. When it holds, the current matching is optimal
-  # for the new weights, and since the addends are distinct and sit below
-  # every criterion, every optimum gives the player the same partner: the
-  # one the solve would have returned, found without the search.
+  ## ---------- dual shifts (a shortcut; equivalent to a solve) ----------
   #
-  # On the field graph the matching the player's partner is then read from
-  # is the one the shift kept, optimal for the shifted weights - so that is
-  # the state a certified read of it is checked against.
+  # A filter changes some live weights and needs an optimum of the new
+  # weights. When the matching held stays optimal under them, moving duals
+  # proves it and replaces the search. The equivalence: `shift_and_set/3`
+  # accepts only a dual update under which every dual is non-negative,
+  # every matched edge tight and every changed edge feasible, which is LP
+  # optimality of the unchanged matching for the new weights; otherwise it
+  # refuses and the caller solves. Either way the filter reads an optimum
+  # of the same weights, and the filters read only what every optimum
+  # agrees on (section 4.1 of docs/dutch-cascade.md).
+
+  # Filter 4.3 / 4.8 for one player whose seat values were just added: the
+  # player's dual rises by the value its current partner got. That keeps
+  # the pair tight and leaves every other changed edge feasible exactly
+  # when no better-valued opponent is within reach. The seat values are
+  # distinct, so every optimum then gives the player the same partner.
+  #
+  # On the field graph the partner is read from the matching the shift
+  # kept, so that is the state a certified read is checked against.
   defp keep_partner_by_dual_shift(st, player) do
     with_shiftable_matcher(st, fn matcher, to_matcher, weigh ->
       shift_to_live(st, [player], matcher, to_matcher, weigh)
@@ -8750,11 +8752,12 @@ defmodule Ainalrami.Pairing do
     end
   end
 
-  # Where a dual shift may stand in for a re-solve: the local graph, or the
-  # field graph when the bracket is everything left of the round -- the
-  # places `exchange_by_dual_shift/2` shifts, for the reason given there.
-  # Hands `fun` the matcher, its vertex numbering and its weigher, and
-  # keeps the matcher `fun` returns.
+  # Where a shift may stand in for a solve: the local graph; the field graph
+  # when the bracket is everything left of the round; and otherwise the
+  # field graph in certified mode only, where the round is tainted so that
+  # every later read is certified against the shifted state. Hands `fun`
+  # the matcher, its vertex numbering and its weigher, and keeps the
+  # matcher `fun` returns.
   defp with_shiftable_matcher(%{mode: :local, wm: wm} = st, fun) when wm != nil do
     # The local matcher has only the bracket (and the stand-in); `live`
     # also holds edges into the peek beyond it, which `solve_local/1`
@@ -8767,8 +8770,6 @@ defmodule Ainalrami.Pairing do
     end
   end
 
-  # With a field below, only in certified mode, and tainting the round - see
-  # `exchange_by_dual_shift/2`.
   defp with_shiftable_matcher(%{mode: :field, synced: true} = st, fun) do
     whole? = st.nsgb == st.m
 
@@ -8802,19 +8803,13 @@ defmodule Ainalrami.Pairing do
 
   defp with_shiftable_matcher(_st, _fun), do: :no
 
-  # Bring the matcher's weights up to `live` -- every write queued since
-  # the last solve, on the vertices the matcher has (`to_matcher` answers
-  # nil for the rest) -- by moving the duals of `shifted` (each by what its
-  # matched edge changed, so that edge stays tight) instead of preparing
-  # the written vertices for a re-solve. `shift_and_set/3` then checks
-  # what makes the unchanged matching optimal for the new weights: every
-  # dual non-negative, every matched edge tight, every listed edge
-  # feasible. A dual that goes DOWN can make an unwritten edge infeasible
-  # too, so every edge of such a vertex is listed. Since 2026-10-02
-  # `shift_and_set/3` checks those edges itself whether listed or not; they
-  # are still listed here because listing an edge also makes its far end a
-  # TOUCHED vertex, refused when it sits inside a blossom - and that refusal
-  # is part of what the differential corpus pins. On success the queue
+  # Brings the matcher's weights up to `live` - every write queued since the
+  # last solve, on the vertices the matcher has (`to_matcher` answers nil
+  # for the rest) - by moving the duals of `shifted`, each by what its
+  # matched edge changed. A dual that goes down can make an unwritten edge
+  # infeasible, so every edge of such a vertex is listed for the check as
+  # well; listing an edge also makes its far end a touched vertex, which
+  # `shift_and_set/3` refuses inside a blossom. On success the write queue
   # has been applied and is cleared.
   defp shift_to_live(st, shifted, matcher, to_matcher, weigh) do
     edges =
@@ -8854,6 +8849,16 @@ defmodule Ainalrami.Pairing do
       :error ->
         :error
     end
+  end
+
+  ## ---------- proof (consumes a paired bracket; changes nothing) ----------
+
+  # Called between the filters and `close_bracket/1`: records what the
+  # bracket is about to publish when a proof is being written, and hands the
+  # state on untouched.
+  defp record_proof(st) do
+    if Ainalrami.Proof.recording?(), do: proof_read(st)
+    st
   end
 
   # A pairing proof's record of the pairs this bracket is about to publish
