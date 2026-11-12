@@ -580,7 +580,10 @@ defmodule Ainalrami.Pairing do
   # Returns `{{:ok, pairs} | {:raised, error, stacktrace}, batch}`: the
   # round's own `NoValidPairingError` comes back as a value, so the shared
   # work the round did before it failed is not lost with it.
-  defp pair_round(players, opts, path, batch) do
+  #
+  # `record?` asks for the decision records as well (`explain_decisions/2`):
+  # the answer is then `{:ok, pairs, records}`.
+  defp pair_round(players, opts, path, batch, record? \\ false) do
     # The initial colour first, as it always was: inferring it reads every
     # game, and an input that fails there should fail there.
     {initial, batch} =
@@ -591,7 +594,7 @@ defmodule Ainalrami.Pairing do
 
     played = rounds_played(players)
     active = Enum.filter(players, &active_this_round?(&1, played))
-    ctx = round_inputs(opts, played, active, initial || "w", batch)
+    ctx = %{round_inputs(opts, played, active, initial || "w", batch) | record?: record?}
 
     # `pair_round_one/1` is a shortcut: it knows the whole field is tied
     # on zero, so rank order alone decides the split and nothing has to
@@ -611,7 +614,8 @@ defmodule Ainalrami.Pairing do
            Enum.all?(active, &(&1.games == [])) and
            is_nil(ctx.forbidden) and is_nil(ctx.soft) and is_nil(ctx.bye_excluded) and
            not Enum.any?(active, &(acceleration_at(&1, played) != 0.0)) do
-        {{:ok, round_one(active, ctx.initial_colour)}, batch}
+        pairs = round_one(active, ctx.initial_colour)
+        {{:ok, pairs, round_one_records(ctx, active, pairs)}, batch}
       else
         # The FULL roster, not just the active players - float direction
         # has to look up opponents' scores, and an opponent may be one of
@@ -625,9 +629,9 @@ defmodule Ainalrami.Pairing do
     # the corpora and the reproductions keyed on them included. Nothing
     # that publishes a board passes it.
     case result do
-      {:ok, pairs} ->
+      {:ok, pairs, records} ->
         pairs = if opts[:cascade_order], do: pairs, else: board_order(pairs, players, played)
-        {{:ok, pairs}, batch}
+        if record?, do: {{:ok, pairs, records}, batch}, else: {{:ok, pairs}, batch}
 
       raised ->
         {raised, batch}
@@ -678,7 +682,10 @@ defmodule Ainalrami.Pairing do
   #     shortcuts (`certified_cascade/3`);
   #   * `bye_score` and `first_single_bye?` - the PAB score and the first
   #     bracket's C9 gate, nil and false until the pre-pass (`pab_prepass/3`)
-  #     has read them off its matching.
+  #     has read them off its matching;
+  #   * `record?` - whether the cascade keeps its decision records
+  #     (`explain_decisions/2`, docs/dutch-cascade.md section 10). False for
+  #     every round `pair_next_round/2` pairs, and then nothing is built.
   #
   # `global_context/2` adds what the field determines once the pre-pass
   # has run: the PAB score and the first bracket's C9 gate, the weight
@@ -726,7 +733,8 @@ defmodule Ainalrami.Pairing do
       batch: batch && batch.mode,
       cert: false,
       bye_score: nil,
-      first_single_bye?: false
+      first_single_bye?: false,
+      record?: false
     }
   end
 
@@ -748,7 +756,8 @@ defmodule Ainalrami.Pairing do
       batch: nil,
       cert: false,
       bye_score: nil,
-      first_single_bye?: false
+      first_single_bye?: false,
+      record?: false
     }
   end
 
@@ -1875,6 +1884,55 @@ defmodule Ainalrami.Pairing do
   """
   def pair_later_round(players, opts \\ []), do: pair_entry(players, opts, :later)
 
+  @doc """
+  Pairs the next round exactly as `pair_next_round/2` does, and says how
+  each bracket was decided (docs/dutch-cascade.md, section 10).
+
+  Returns `%{pairs: pairs, brackets: records}`. `pairs` is
+  `pair_next_round(players, opts)`'s answer; `records` has one map per
+  bracket, in the order the cascade took them:
+
+    * `score`, `mdps`, `residents` - the bracket;
+    * `pairs` (coloured, as the cascade finalised them) and `carried` - the
+      members it handed on;
+    * `path` - `:idle`, `:local`, `:direct` or `:field`, or `:round_one` /
+      `:repair` for the two round-wide answers;
+    * `shortcut` - for a bracket the filters did not run on, the answer
+      taken and the argument that makes it theirs, `%{name:, guarantee:}`;
+      nil otherwise;
+    * `shortcuts` - the shortcuts the filters' solves took, the same shape;
+    * `steps` - each filter decision in order, `%{filter:, player:,
+      decision:, beat:, beat_more:}`. `beat` is what the decision was
+      preferred to, at most eight entries `%{choice:, by:}` (the rest counted
+      in `beat_more`), where `by` is `{:rung, label}` - the first ladder rung
+      on which the best matching that makes the other choice scores less
+      over the bracket's window - or `{:absolute, reason}`, `{:filters,
+      filter}` (every rung tied, so the filter order decided; `:earlier`
+      when an earlier step had already cut that edge), `{:beyond_window,
+      label}` (the window sums favour the alternative on `label`, so what
+      beat it lies beyond the window) or `:unknown`.
+
+  Each alternative costs a solve, so a large round explains slowly; the
+  pairs are `pair_next_round/2`'s whatever it costs. `:bye_preferences` is
+  refused (it pairs the round more than once) and `:proof` is ignored.
+  """
+  def explain_decisions(players, opts \\ []) do
+    opts = if Keyword.keyword?(opts), do: Keyword.delete(opts, :proof), else: opts
+    validate_input!(players, opts)
+
+    if Ainalrami.ByePreference.active?(opts) do
+      raise ArgumentError, "explain_decisions/2 does not take :bye_preferences"
+    end
+
+    case pair_round(players, opts, :auto, nil, true) do
+      {{:ok, pairs, brackets}, nil} ->
+        %{pairs: pairs, brackets: brackets}
+
+      {{:raised, e, stack}, nil} ->
+        reraise diagnose_exclusions(e, players, opts, :auto), stack
+    end
+  end
+
   # `ctx` is the round's inputs (`round_inputs/5`) and `batch`
   # `pair_variants/3`'s shared work or nil; returns
   # `{{:ok, pairs} | {:raised, NoValidPairingError, stacktrace}, batch}`.
@@ -1923,7 +1981,7 @@ defmodule Ainalrami.Pairing do
 
     result =
       case certified_cascade(brackets, allowed_byes, ctx) do
-        {:ok, pairs, leftover} ->
+        {:ok, pairs, leftover, records} ->
           # `global_cascade/3` returns `:ok` only after `check_completion/4`
           # has passed on exactly these pairs and this leftover, so the round
           # is already known legal here: bye count, C2 eligibility and the C5
@@ -1932,7 +1990,7 @@ defmodule Ainalrami.Pairing do
           # same set - provably true whenever it was reached, so its repair
           # branch, and with it every use of `Ainalrami.Blossom`, could not
           # run. Both are gone; see docs/engineering-log.md.
-          {:ok, pairs ++ Enum.map(leftover, &{&1.rank, nil})}
+          {:ok, pairs ++ Enum.map(leftover, &{&1.rank, nil}), records}
 
         :infeasible ->
           # `global_cascade/3` only reports this once its own completion
@@ -2754,14 +2812,15 @@ defmodule Ainalrami.Pairing do
 
     ctx = global_context(field, inputs)
 
-    {pairs, leftover} = run_brackets(field, ctx, new_round_state(field, allowed_byes, ctx))
+    {pairs, leftover, rs} = run_brackets(field, ctx, new_round_state(field, allowed_byes, ctx))
+    records = Enum.reverse(rs.records)
 
     # The staged refinement is not told how many byes are legal, so the
     # result is checked rather than assumed. Falling back to the
     # backtracking cascade beats emitting an illegal round.
     case check_completion(ctx, pairs, leftover, allowed_byes) do
       :ok ->
-        {:ok, pairs, leftover}
+        {:ok, pairs, leftover, records}
 
       {:incomplete, reason} ->
         # The staged refinement finalises pairs one at a time and locks
@@ -2775,10 +2834,14 @@ defmodule Ainalrami.Pairing do
         if System.get_env("AINALRAMI_TRACE_FALLBACK"), do: IO.puts("[repair] #{reason}")
 
         case repair_completion(ctx, field, pairs, allowed_byes) do
-          {:ok, repaired, repaired_leftover} = ok ->
+          {:ok, repaired, repaired_leftover} ->
             case check_completion(ctx, repaired, repaired_leftover, allowed_byes) do
-              :ok -> ok
-              {:incomplete, r} -> trace_fallback("repair failed: #{r} (was #{reason})")
+              :ok ->
+                {:ok, repaired, repaired_leftover,
+                 records ++ repair_records(ctx, repaired, repaired_leftover)}
+
+              {:incomplete, r} ->
+                trace_fallback("repair failed: #{r} (was #{reason})")
             end
 
           :infeasible ->
@@ -3258,7 +3321,12 @@ defmodule Ainalrami.Pairing do
       builder_c9: true,
       virtual_builder: nil,
       oracle: build_oracle(field, allowed_byes, ctx),
-      dense_rows: %{}
+      dense_rows: %{},
+      # The decision records (`ctx.record?` only): the brackets' so far,
+      # latest first, and what the attempt that answered the current one
+      # left for its record.
+      records: [],
+      note: nil
     }
   end
 
@@ -3279,7 +3347,7 @@ defmodule Ainalrami.Pairing do
 
   defp run_brackets(field, ctx, rs) do
     case Enum.chunk_by(field, & &1.points) do
-      [] -> {[], []}
+      [] -> {[], [], rs}
       [first | rest] -> bracket_loop(first, 0, rest, ctx, [], ctx.first_single_bye?, rs)
     end
   end
@@ -3290,9 +3358,9 @@ defmodule Ainalrami.Pairing do
   # field that is a single score group, and then "odd field with an even
   # number of players below", which was a guess at the same thing without
   # the matching to read it from.
-  defp bracket_loop(by_index, _sgb, [], _ctx, pairs, _single_bye?, _rs)
+  defp bracket_loop(by_index, _sgb, [], _ctx, pairs, _single_bye?, rs)
        when length(by_index) <= 1 do
-    {pairs, by_index}
+    {pairs, by_index, rs}
   end
 
   defp bracket_loop(by_index, sgb, rest_groups, ctx, pairs, single_bye?, rs) do
@@ -3345,7 +3413,7 @@ defmodule Ainalrami.Pairing do
         else: next_group == [] and new_pairs == []
 
     if stop? do
-      {pairs, carried}
+      {pairs, carried, rs}
     else
       bracket_loop(carried, new_sgb, rest, ctx, pairs ++ new_pairs, next_single_bye?, rs)
     end
@@ -3534,10 +3602,10 @@ defmodule Ainalrami.Pairing do
         :timer.tc(fn -> pair_bracket_solve(combined, sgb, nsgb, wsgb, ctx, single_bye?, rs) end)
 
       Log.debug(fn -> bracket_trace(combined, sgb, nsgb, wsgb, path, us) end)
-      {result, rs}
+      {result, record_bracket(rs, ctx, path, result, combined, sgb, nsgb)}
     else
-      {_path, result, rs} = pair_bracket_solve(combined, sgb, nsgb, wsgb, ctx, single_bye?, rs)
-      {result, rs}
+      {path, result, rs} = pair_bracket_solve(combined, sgb, nsgb, wsgb, ctx, single_bye?, rs)
+      {result, record_bracket(rs, ctx, path, result, combined, sgb, nsgb)}
     end
   end
 
@@ -3754,11 +3822,11 @@ defmodule Ainalrami.Pairing do
           check_direct!(result, local_stages(args, rs))
         end
 
-        accept_local(result, args, :direct, rs)
+        accept_local(result, args, :direct, rs, shortcut_note(ctx, :direct_local))
 
       :no ->
         case local_stages(args, rs) do
-          {:ok, result} -> accept_local(result, args, :local, rs)
+          {:ok, result, note} -> accept_local(result, args, :local, rs, note)
           :field -> :field
         end
     end
@@ -3771,14 +3839,15 @@ defmodule Ainalrami.Pairing do
     st = new_bracket(:local, combined, m, sgb, nsgb, wsgb, wl, ctx, single_bye?, rs) |> solve()
 
     if map_size(st.matching) == wl do
-      {:ok, st |> pair_by_filters() |> record_proof() |> close_bracket()}
+      st = st |> pair_by_filters() |> record_proof()
+      {:ok, close_bracket(st), bracket_note(st, [:local_graph])}
     else
       :field
     end
   end
 
   # `args` are the bracket's arguments, for check mode.
-  defp accept_local({pairs, _, _, _} = result, {_, _, _, _, _, ctx, _} = args, path, rs) do
+  defp accept_local({pairs, _, _, _} = result, {_, _, _, _, _, ctx, _} = args, path, rs, note) do
     # Condition (b): with this bracket's finalised players gone, the rest
     # -- the floater included, on an odd bracket -- can still be paired.
     positions =
@@ -3806,7 +3875,7 @@ defmodule Ainalrami.Pairing do
         # The bracket is out of the field for good, for the oracle and
         # for the field matcher alike: the next field-graph bracket
         # rebuilds its matcher from the players that remain.
-        {:ok, path, result, fresh_matcher(%{rs | oracle: oracle})}
+        {:ok, path, result, fresh_matcher(%{rs | oracle: oracle, note: note})}
 
       :no ->
         :field
@@ -3920,7 +3989,15 @@ defmodule Ainalrami.Pairing do
 
       cert_count(ctx, {:direct_field, kind})
       if pool_dense? or dense?, do: cert_count(ctx, {:direct_field_dense, kind})
-      rs = %{rs | oracle: oracle, matcher: nil, virtual_builder: false}
+
+      rs = %{
+        rs
+        | oracle: oracle,
+          matcher: nil,
+          virtual_builder: false,
+          note: shortcut_note(ctx, {:direct_field, kind})
+      }
+
       rs = if nsgb < m, do: taint(rs, ctx), else: rs
       {:ok, result, rs}
     else
@@ -3967,7 +4044,7 @@ defmodule Ainalrami.Pairing do
       end
 
       cert_count(ctx, {:direct_field, :empty})
-      rs = %{rs | matcher: nil, virtual_builder: false}
+      rs = %{rs | matcher: nil, virtual_builder: false, note: shortcut_note(ctx, :direct_empty)}
       rs = if nsgb < m, do: taint(rs, ctx), else: rs
       {:ok, result, rs}
     else
@@ -4014,7 +4091,7 @@ defmodule Ainalrami.Pairing do
       end
 
       cert_count(ctx, {:direct_field, :last})
-      {:ok, result, rs}
+      {:ok, result, %{rs | note: shortcut_note(ctx, :direct_last)}}
     else
       _ -> :no
     end
@@ -4398,7 +4475,7 @@ defmodule Ainalrami.Pairing do
     end
 
     case stages do
-      {:ok, reference} ->
+      {:ok, reference, _note} ->
         if view.(direct) != view.(reference) do
           raise "direct bracket differs from the filters: #{inspect(view.(direct))} vs #{inspect(view.(reference))}"
         end
@@ -4448,7 +4525,7 @@ defmodule Ainalrami.Pairing do
       |> record_proof()
 
     {pairs, _, _, _} = result = close_bracket(st)
-    rs = graft_back(st)
+    rs = st |> graft_back() |> put_note(st)
 
     # Keep the oracle in step: whoever this bracket finalised is out of the
     # field for every later bracket's (b).
@@ -4548,7 +4625,13 @@ defmodule Ainalrami.Pairing do
       dirty: [],
       # Certified answers, per snapshot (keys lead with the snapshot's
       # ref): see `certified/4`.
-      memo: %{}
+      memo: %{},
+      # The C9 gate the bracket is scored with, for a decision record's
+      # rung sums; and the record itself (`ctx.record?` only): the filters'
+      # steps and the shortcuts their solves took, latest first.
+      single_bye?: single_bye?,
+      steps: [],
+      shortcuts: []
     }
   end
 
@@ -6461,7 +6544,10 @@ defmodule Ainalrami.Pairing do
            end) do
         {:ok, window_matcher, window} ->
           cert_count(st.ctx, :window_mode)
-          %{taint_st(st) | window: window} |> put_matcher(window_matcher)
+
+          %{taint_st(st) | window: window}
+          |> put_matcher(window_matcher)
+          |> note_shortcut(:window)
 
         :no ->
           cert_count(st.ctx, :window_declined)
@@ -7268,7 +7354,7 @@ defmodule Ainalrami.Pairing do
 
     {st, {matcher, matching_f}} =
       case install do
-        {:ok, installed} -> {taint_st(st), installed}
+        {:ok, installed} -> {st |> taint_st() |> note_shortcut(:certified_install), installed}
         _ -> {st, cert_timed(st.ctx, :ms_solve, fn -> WeightedMatching.solve(matcher) end)}
       end
 
@@ -8283,15 +8369,18 @@ defmodule Ainalrami.Pairing do
       certified_count(st, members, :internal, fn _v, p -> p >= sgb and p < nsgb end)
 
     size = length(members)
+    choice? = wanted > 0 and wanted < size
 
     {st, _} =
       members
       |> Enum.with_index()
       |> Enum.reduce({st, wanted}, fn
-        _, {st, 0} ->
-          {st, 0}
+        {mdp, _k}, {st, 0} ->
+          {note_mdp(st, st, mdp, false, choice?), 0}
 
         {mdp, k}, {st, wanted} ->
+          before = st
+
           # Every one left is paired in every optimum. The read is still
           # taken: the count was taken before the probes above it moved the
           # matching, and a member the matching now places elsewhere is
@@ -8300,15 +8389,17 @@ defmodule Ainalrami.Pairing do
             if wanted >= size - k, do: internal?(st, mdp), else: {false, st}
 
           if all_left? do
-            {take(st, mdp), wanted - 1}
+            {st |> take(mdp) |> note_mdp(before, mdp, true, choice?), wanted - 1}
           else
             {inside?, st} = internal?(st, mdp)
             st = if inside?, do: st, else: probe_mdp(st, mdp)
             {inside?, st} = internal?(st, mdp)
 
             if inside?,
-              do: {st |> take(mdp) |> hold_mdp(mdp), wanted - 1},
-              else: {st, wanted}
+              do:
+                {st |> take(mdp) |> hold_mdp(mdp) |> note_mdp(before, mdp, true, choice?),
+                 wanted - 1},
+              else: {note_mdp(st, before, mdp, false, choice?), wanted}
           end
       end)
 
@@ -8339,6 +8430,7 @@ defmodule Ainalrami.Pairing do
         |> reweigh(mdp, open, fn w, opp -> w + Map.fetch!(values, opp) end)
         |> solve()
         |> fix_pair(mdp)
+        |> note_seat(st, "4.3", mdp, open)
       else
         st
       end
@@ -8360,7 +8452,7 @@ defmodule Ainalrami.Pairing do
       end)
 
     {pairs, st} = certified_count(st, remainder, :earlier, fn v, p -> p < v end)
-    %{st | remainder: remainder, remainder_pairs: pairs}
+    note_split(%{st | remainder: remainder, remainder_pairs: pairs})
   end
 
   # 4.5's value of a pair inside the remainder, a function of its earlier
@@ -8433,6 +8525,7 @@ defmodule Ainalrami.Pairing do
           {:halt, {st, 0}}
 
         {p, idx}, {st, left} ->
+          before = st
           later = later_in_remainder(st, idx)
           value = exchange_value(st, idx)
           {probed?, st} = paired_down?(st, p)
@@ -8444,11 +8537,14 @@ defmodule Ainalrami.Pairing do
 
           {needed?, st} = exchange_needed?(st, p)
 
-          cond do
-            needed? -> {:cont, {cut(st, p, later), left - 1}}
-            probed? -> {:cont, {reweigh(st, p, later, fn w, _ -> w + value end), left}}
-            true -> {:cont, {st, left}}
-          end
+          st =
+            cond do
+              needed? -> cut(st, p, later)
+              probed? -> reweigh(st, p, later, fn w, _ -> w + value end)
+              true -> st
+            end
+
+          {:cont, {note_down(st, before, "4.6", p, later, not needed?), left - bit(needed?)}}
       end)
 
     st
@@ -8468,6 +8564,7 @@ defmodule Ainalrami.Pairing do
         if left <= 1 do
           {:halt, {st, left}}
         else
+          before = st
           later = later_in_remainder(st, idx)
           value = exchange_value(st, idx)
           {down?, st} = paired_down?(st, q)
@@ -8480,7 +8577,7 @@ defmodule Ainalrami.Pairing do
           {joins?, st} = paired_down?(st, q)
           st = if joins?, do: cut(st, q, Enum.take(st.remainder, idx)), else: st
           st = if down?, do: st, else: reweigh(st, q, later, fn w, _ -> w + value end)
-          {:cont, {st, left - bit(joins?)}}
+          {:cont, {note_down(st, before, "4.7", q, later, joins?), left - bit(joins?)}}
         end
       end)
 
@@ -8536,6 +8633,7 @@ defmodule Ainalrami.Pairing do
       {down?, st} = paired_down?(st, p)
 
       if down? do
+        before = st
         open = Enum.filter(st.remainder, &(&1 > p and not MapSet.member?(st.matched, &1)))
         values = seat_values(open, 0)
         st = reweigh(st, p, open, fn w, q -> w + Map.fetch!(values, q) end)
@@ -8544,11 +8642,344 @@ defmodule Ainalrami.Pairing do
           {:ok, st} -> fix_pair(st, p)
           _ -> st |> solve() |> fix_pair(p)
         end
+        |> note_seat(before, "4.8", p, open)
       else
         st
       end
     end)
   end
+
+  ## ---------- decision records (docs/dutch-cascade.md, section 10) ----------
+  #
+  # Kept only when `ctx.record?`: every function here hands its state back
+  # untouched otherwise, before it builds anything. A record reads the
+  # cascade and never steers it. Each alternative is solved on the bracket
+  # state as the step found it, a value the step has already moved on from,
+  # so nothing the cascade holds sees the solve.
+
+  @decision_beaten_max 8
+
+  defp push_step(st, step), do: %{st | steps: [step | st.steps]}
+
+  defp rank_at(st, i), do: elem(st.arr, i).rank
+
+  defp note_shortcut(%{ctx: %{record?: false}} = st, _name), do: st
+  defp note_shortcut(st, name), do: %{st | shortcuts: [name | st.shortcuts]}
+
+  # 4.2, an MDP of a score that had a choice: paired inside, or carried.
+  defp note_mdp(%{ctx: %{record?: false}} = st, _before, _mdp, _paired?, _choice?), do: st
+  defp note_mdp(st, _before, _mdp, _paired?, false), do: st
+
+  defp note_mdp(st, before, mdp, paired?, true) do
+    {sgb, nsgb} = {st.sgb, st.nsgb}
+    resident? = fn j -> j >= sgb and j < nsgb end
+
+    if paired?,
+      do: note_choice(st, before, "4.2", mdp, :paired, :carried, &(not resident?.(&1))),
+      else: note_choice(st, before, "4.2", mdp, :carried, :paired, resident?)
+  end
+
+  # 4.6 (an S1 member: paired down = stays) and 4.7 (an S2 member: paired
+  # down = joins). `later` is the remainder below the player.
+  defp note_down(%{ctx: %{record?: false}} = st, _before, _article, _i, _later, _down?), do: st
+
+  defp note_down(st, before, article, i, later, down?) do
+    later = MapSet.new(later)
+    below? = &MapSet.member?(later, &1)
+    {yes, no} = if article == "4.6", do: {:stays, :leaves}, else: {:joins, :stays}
+
+    if down?,
+      do: note_choice(st, before, article, i, yes, no, &(not below?.(&1))),
+      else: note_choice(st, before, article, i, no, yes, below?)
+  end
+
+  # A yes/no step. `keep` names the edges of `i` the other answer keeps.
+  defp note_choice(st, before, article, i, decision, other, keep) do
+    push_step(st, %{
+      filter: article,
+      player: rank_at(st, i),
+      decision: decision,
+      beat: [%{choice: other, by: verdict(st, alternative(before, i, keep), article)}],
+      beat_more: 0
+    })
+  end
+
+  # 4.3 and 4.8: the seat taken, and each open candidate ranked above it.
+  defp note_seat(%{ctx: %{record?: false}} = st, _before, _article, _i, _open), do: st
+
+  defp note_seat(st, before, article, i, open) do
+    taken = partner(st, i)
+
+    {ahead, decision} =
+      case Enum.split_while(open, &(&1 != taken)) do
+        {ahead, [_ | _]} -> {ahead, {:seat, rank_at(st, taken)}}
+        {all, []} -> {all, :open}
+      end
+
+    {shown, more} = Enum.split(ahead, @decision_beaten_max)
+
+    beat =
+      Enum.map(shown, fn c ->
+        %{choice: rank_at(st, c), by: seat_beaten_by(st, before, article, i, c)}
+      end)
+
+    push_step(st, %{
+      filter: article,
+      player: rank_at(st, i),
+      decision: decision,
+      beat: beat,
+      beat_more: length(more)
+    })
+  end
+
+  defp seat_beaten_by(st, before, article, i, c) do
+    if get_w(before.live, i, c) == 0 do
+      case exclusion_reason(st.ctx, elem(st.arr, i), elem(st.arr, c)) do
+        nil -> {:filters, :earlier}
+        %{reason: reason} -> {:absolute, reason}
+      end
+    else
+      verdict(st, alternative(before, i, &(&1 == c)), article)
+    end
+  end
+
+  # 4.4: the split C6 fixed. Nothing is beaten, and an empty remainder
+  # has nothing to split.
+  defp note_split(%{ctx: %{record?: false}} = st), do: st
+  defp note_split(%{remainder: []} = st), do: st
+
+  defp note_split(st) do
+    {s1, s2} = Enum.split(st.remainder, st.remainder_pairs)
+
+    push_step(st, %{
+      filter: "4.4",
+      player: nil,
+      decision: %{s1: Enum.map(s1, &rank_at(st, &1)), s2: Enum.map(s2, &rank_at(st, &1))},
+      beat: [],
+      beat_more: 0
+    })
+  end
+
+  # The best matching left that makes the other choice: the state the step
+  # found, with every edge of `i` that `keep` refuses cut, solved. nil when
+  # that state cannot be solved here (a certified mode that refuses).
+  defp alternative(before, i, keep) do
+    vertices = if before.mode == :local, do: before.wl, else: before.m
+    drop = Enum.reject(0..(vertices - 1)//1, &(&1 == i or keep.(&1)))
+    before |> cut(i, drop) |> solve() |> Map.fetch!(:matching)
+  catch
+    :throw, _ -> nil
+  end
+
+  defp verdict(_st, nil, _article), do: :unknown
+
+  defp verdict(st, alternative, article) do
+    case first_rung_apart(window_rungs(st, st.matching), window_rungs(st, alternative)) do
+      nil -> {:filters, article}
+      {label, actual, other} when other < actual -> {:rung, label}
+      {label, _actual, _other} -> {:beyond_window, label}
+    end
+  end
+
+  # `explain_round/3`'s rung sums for this bracket, read off a matching in
+  # the bracket's positions: the pairs inside it at reach 0, the edges into
+  # the next group at reach 1. On the local graph an odd bracket's stand-in
+  # is the first next-group player the floater may meet, the one
+  # `stand_in_edges/8` weighs it against.
+  defp window_rungs(st, matching) do
+    %{arr: arr, nsgb: nsgb, wsgb: wsgb, ctx: ctx} = st
+
+    0..(nsgb - 1)//1
+    |> Enum.flat_map(fn i ->
+      p = Map.get(matching, i, i)
+
+      cond do
+        p == i -> []
+        p < nsgb -> if i < p, do: [{i, p, 0}], else: []
+        p < wsgb -> st |> float_partner(i, p) |> List.wrap() |> Enum.map(&{i, &1, 1})
+        true -> []
+      end
+    end)
+    |> Enum.map(fn {i, j, reach} ->
+      {a, b} = order_by_placement(elem(arr, i), elem(arr, j))
+      edge_rungs(a, b, reach, ctx, ctx.bands, st.single_bye?)
+    end)
+    |> sum_rungs()
+  end
+
+  defp float_partner(%{mode: :local, nsgb: nsgb} = st, i, nsgb) when rem(nsgb, 2) == 1 do
+    a = elem(st.arr, i)
+
+    Enum.find(nsgb..(st.wsgb - 1)//1, fn j ->
+      b = elem(st.arr, j)
+      legal_pair?(st.ctx, a, b) and colour_compatible?(st.ctx, a, b)
+    end)
+  end
+
+  defp float_partner(_st, _i, p), do: p
+
+  defp first_rung_apart(actual, other) do
+    labels = Enum.map(if(actual == [], do: other, else: actual), &elem(&1, 0))
+    {a, o} = {Map.new(actual), Map.new(other)}
+
+    Enum.find_value(labels, fn label ->
+      {av, ov} = {Map.get(a, label, 0), Map.get(o, label, 0)}
+      if av != ov and decision_rung?(label), do: {label, av, ov}
+    end)
+  end
+
+  # As `Ainalrami.Alternatives.compare/2`: the completion rung counts edges
+  # and steers the bye across a window, which is accounting at this scale.
+  defp decision_rung?("C2/" <> _completion), do: false
+  defp decision_rung?(_label), do: true
+
+  # What an attempt leaves for its bracket's record.
+  defp shortcut_note(%{record?: false}, _name), do: nil
+  defp shortcut_note(_ctx, name), do: %{shortcut: name, shortcuts: [], steps: []}
+
+  defp bracket_note(%{ctx: %{record?: false}}, _extra), do: nil
+
+  defp bracket_note(st, extra) do
+    certified = if st.mode == :field and st.rs.taint == true, do: [:certified_reads], else: []
+
+    %{
+      shortcut: nil,
+      shortcuts: Enum.uniq(extra ++ Enum.reverse(st.shortcuts) ++ certified),
+      steps: Enum.reverse(st.steps)
+    }
+  end
+
+  defp put_note(rs, %{ctx: %{record?: false}}), do: rs
+  defp put_note(rs, st), do: %{rs | note: bracket_note(st, [])}
+
+  defp record_bracket(rs, %{record?: false}, _path, _result, _combined, _sgb, _nsgb), do: rs
+
+  defp record_bracket(rs, _ctx, path, {pairs, carried, members, _}, combined, sgb, nsgb) do
+    note = rs.note || %{shortcut: if(path == :idle, do: :idle), shortcuts: [], steps: []}
+    {mdps, rest} = Enum.split(combined, sgb)
+    residents = Enum.take(rest, nsgb - sgb)
+
+    record = %{
+      score: Enum.at(combined, max(nsgb - 1, 0)).points,
+      mdps: Enum.map(mdps, & &1.rank),
+      residents: Enum.map(residents, & &1.rank),
+      pairs: pairs,
+      carried: carried |> Enum.take(members) |> Enum.map(& &1.rank),
+      path: path,
+      shortcut: note.shortcut && shortcut_info(note.shortcut),
+      shortcuts: Enum.map(note.shortcuts, &shortcut_info/1),
+      steps: note.steps
+    }
+
+    %{rs | records: [record | rs.records], note: nil}
+  end
+
+  defp round_one_records(%{record?: false}, _active, _pairs), do: []
+
+  defp round_one_records(_ctx, active, pairs) do
+    {games, byes} = Enum.split_with(pairs, fn {_w, b} -> b != nil end)
+
+    [
+      %{
+        score: active |> Enum.map(& &1.points) |> Enum.max(fn -> 0 end),
+        mdps: [],
+        residents: active |> Enum.map(& &1.rank) |> Enum.sort(),
+        pairs: games,
+        carried: Enum.map(byes, &elem(&1, 0)),
+        path: :round_one,
+        shortcut: shortcut_info(:round_one),
+        shortcuts: [],
+        steps: []
+      }
+    ]
+  end
+
+  defp repair_records(%{record?: false}, _pairs, _leftover), do: []
+
+  defp repair_records(_ctx, pairs, leftover) do
+    [
+      %{
+        score: nil,
+        mdps: [],
+        residents: [],
+        pairs: pairs,
+        carried: Enum.map(leftover, & &1.rank),
+        path: :repair,
+        shortcut: shortcut_info(:repair),
+        shortcuts: [],
+        steps: []
+      }
+    ]
+  end
+
+  defp shortcut_info(name), do: %{name: name, guarantee: guarantee(name)}
+
+  defp guarantee(:idle),
+    do:
+      "Fewer than two members finalise no pair, and with the next bracket's C9 gate " <>
+        "shut nothing reads the tentative matching: every member carries, as the " <>
+        "filters would leave them."
+
+  defp guarantee(:local_graph),
+    do:
+      "Every window member is a non-candidate for the bye, the bracket has a perfect " <>
+        "internal matching and the rest of the field can be completed: every optimum " <>
+        "of the field graph pairs the bracket inside, so its own graph has the same optimum."
+
+  defp guarantee(:direct_local),
+    do:
+      "The local graph's conditions hold and the direct walk met every rung's bound: " <>
+        "the bracket's optimum over its own edges, the answer the filters read off it."
+
+  defp guarantee({:direct_field, kind}),
+    do:
+      "Every optimum of the field graph pairs this bracket as its own optimum over " <>
+        "the floaters the field below can take (the #{kind} shape); the direct walk's " <>
+        "answer over that pool is the filters'."
+
+  defp guarantee(:direct_empty),
+    do:
+      "No two members can play each other, so no matching pairs two of them: the " <>
+        "filters pair nobody and carry everyone, and the next C9 gate is shut on its own terms."
+
+  defp guarantee(:direct_last),
+    do:
+      "The last bracket of an odd field: every optimum pairs all but one bye candidate " <>
+        "of least rank, so the direct walk with the bye as its floater is the filters' answer."
+
+  defp guarantee(:dual_shift),
+    do:
+      "The matching held stays optimal under the new weights (non-negative duals, " <>
+        "every matched edge tight, every changed edge feasible), so moving the duals " <>
+        "stood in for a solve."
+
+  defp guarantee(:certified_install),
+    do:
+      "A certificate proved the matching held before the writes optimal after them, " <>
+        "and it was installed instead of searching."
+
+  defp guarantee(:window),
+    do:
+      "The bracket ran on its window, the field below priced in as one dummy vertex " <>
+        "per player; a search that wanted the field below would have left the window " <>
+        "before anything was read off it."
+
+  defp guarantee(:certified_reads),
+    do:
+      "The round's matcher was no longer the reference's, so every value the filters " <>
+        "read was proved common to all optimal matchings; one that could not be would " <>
+        "have paired the round again without shortcuts."
+
+  defp guarantee(:round_one),
+    do:
+      "Round one with no history, acceleration, forbidden or soft pairs or bye " <>
+        "exclusions is one score group, so S1 against S2 in rank order is the filters' answer."
+
+  defp guarantee(:repair),
+    do:
+      "The cascade left the round incomplete; a whole-field matching paired as many as " <>
+        "possible, kept as much of the cascade's answer as it could and broke the rest. " <>
+        "The records before this one describe the cascade before the repair."
 
   ## ---------- closing a bracket (docs/dutch-cascade.md, sections 4.9 and 6) ----------
 
@@ -8674,7 +9105,7 @@ defmodule Ainalrami.Pairing do
     local = fn i -> if i < st.wl, do: i end
 
     case fun.(wm, local, edge_weigher(st, & &1, st.m)) do
-      {:ok, wm} -> {:ok, %{st | wm: wm, dirty: []}}
+      {:ok, wm} -> {:ok, note_shortcut(%{st | wm: wm, dirty: []}, :dual_shift)}
       :error -> :no
     end
   end
@@ -8701,7 +9132,7 @@ defmodule Ainalrami.Pairing do
                   st
                 end
 
-              {:ok, %{put_matcher(st, matcher) | dirty: []}}
+              {:ok, note_shortcut(%{put_matcher(st, matcher) | dirty: []}, :dual_shift)}
 
             :error ->
               if not whole?, do: cert_count(st.ctx, :shift_refused)

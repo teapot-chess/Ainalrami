@@ -47,6 +47,7 @@ unless said otherwise).
 | `EventFormat` `match_format:` | `swiss_match_format` | `--match-format` | `XXM` | no FIDE record; refused with groups |
 | `EventFormat` `groups:` | `pair_by_category` | `--groups=1-8/9-12` | `XXG` | no FIDE record |
 | `explain_round/3` | the rationale page | `-x` | - | |
+| `explain_decisions/2` | not used yet | - (not on the command line yet) | - | the pairing is unchanged |
 | `Alternatives.force_pair/5` | "what if these two met" | `-x --force=A-B` | - | |
 | `Alternatives.no_show/4` | "N did not turn up" | `-x --absent=N` | - | |
 | `Alternatives.judge/4` (and `violations/1`) | judging an arbiter's proposal | `-x --judge=1-5,2-6,3-0` **(new)** | - | |

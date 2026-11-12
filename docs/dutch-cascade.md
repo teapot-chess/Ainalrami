@@ -388,3 +388,100 @@ cited.
 11. **Forfeited games do not forbid a rematch** (C1 counts played games).
 12. **A bye exclusion or a bye preference** (organiser deviations, not
     FIDE) makes a player ineligible wherever C2 would.
+
+## 10. Decision records
+
+`Pairing.explain_decisions/2` pairs a round exactly as `pair_next_round/2`
+does and returns, with the pairs, one record per bracket saying how the
+bracket was decided. `explain_round/3` scores a pairing it is handed; this
+reports the choices the engine made while pairing, so the two answer
+different questions and neither replaces the other. The recording reads the
+cascade and never steers it: every alternative it weighs is solved on the
+bracket's state as the step found it - a value the cascade has already
+moved on from - and the pairs are `pair_next_round/2`'s.
+
+### 10.1 One record per bracket
+
+Every bracket the loop takes has a record, whichever way it was answered:
+
+    %{score:, mdps: [rank], residents: [rank], pairs: [{white, black}],
+      carried: [rank], path:, shortcut: nil | %{name:, guarantee:},
+      shortcuts: [%{name:, guarantee:}], steps: [step]}
+
+`path` is the bracket's route (`pair_bracket_solve/7`): `:idle`, `:local`,
+`:direct` or `:field`. A bracket answered without the filters has no steps;
+its `shortcut` names the answer - `:idle`, `:direct_local`, `{:direct_field,
+shape}`, `:direct_empty`, `:direct_last` - and states, as `guarantee`, the
+argument that makes it the filters' own (section 5 and the comment at each
+`attempt_*` function), so no record is empty. A bracket the filters ran on
+has no `shortcut`; its `shortcuts` list what its solves took -
+`:local_graph`, `:dual_shift`, `:certified_install`, `:window`,
+`:certified_reads` - each with its guarantee, and its `steps` what each
+filter decided. Round one, when it is paired without the cascade, is one
+record with path `:round_one`; a completion repair (section 7) adds a last
+record with path `:repair`, after the brackets whose pairs it may have
+broken. A round of one active player pairs no bracket and has no record.
+
+### 10.2 What a step records
+
+`%{filter:, player:, decision:, beat:, beat_more:}`, one per decision a
+filter makes, in the order it makes them:
+
+| filter | player | decision |
+|---|---|---|
+| 4.2 | each MDP of a score that had a choice | `:paired` or `:carried` |
+| 4.3 | each selected MDP | `{:seat, rank}` |
+| 4.4 | nil | `%{s1:, s2:}` (C6 fixes the split; nothing is beaten) |
+| 4.6 | each S1 member asked | `:leaves` or `:stays` |
+| 4.7 | each S2 member asked | `:joins` or `:stays` |
+| 4.8 | each member of L | `{:seat, rank}` |
+
+and `beat`, what the decision was preferred to, as `%{choice:, by:}`:
+
+* a seat (4.3, 4.8): every open candidate ranked above the one taken - the
+  candidates the filter would rather have given the player. One with no
+  edge to the player left is beaten by an absolute criterion,
+  `{:absolute, :rematch | :forbidden | :colour}` (`exclusion_reason/3`),
+  or, when none applies, by an earlier step that cut the edge,
+  `{:filters, :earlier}`. Any other is held to the best matching left that
+  gives the player that candidate.
+* a yes/no (4.2, 4.6, 4.7): the other answer, held to the best matching
+  left that gives it.
+
+"The best matching left" is a solve of the bracket's state as the step
+found it - every hold, cut and fix before it in force - with every edge of
+the player that would avoid the alternative cut. That matching and the one
+the step went on with are scored the way `explain_round/3` scores a
+bracket (section 3's rungs over the pairs inside the bracket and the edges
+into the next group, summed per rung; the completion rung left out, as
+`Alternatives.compare/2` leaves it out), and `by` is the first rung on
+which they differ:
+
+* `{:rung, label}` - the alternative scores less there;
+* `{:beyond_window, label}` - it scores MORE there, so what beat it lies
+  beyond the window: below the next group, or in the completion rung;
+* `{:filters, filter}` - every rung ties, so the filter order itself
+  decided: this step's preference, or a commitment an earlier step made;
+* `:unknown` - the alternative could not be solved on that state.
+
+A seat step lists at most `@decision_beaten_max` (eight) candidates, the
+best-ranked first, and counts the rest in `beat_more`.
+
+The same caveat as `explain_round/3`'s applies, for the same reason: the
+window is a bracket's view, and an alternative that differs only below it
+reads as a tie or as `:beyond_window`. And the best matching left that
+makes a choice may leave the player unpaired instead; that is then what
+was beaten.
+
+### 10.3 What it costs and what it guarantees
+
+Off, it costs nothing: every function that records hands its state back
+untouched when `ctx.record?` is false, before it builds anything, and every
+round paired by `pair_next_round/2` has it false. On, every alternative is
+one more solve, on a copy, so a large round explains slowly. The pairs do
+not change: the suite holds `explain_decisions/2`'s pairs to
+`pair_next_round/2`'s over every fixture and generated tournaments of the
+certified sizes. A certified attempt that aborts (section 5) drops its
+records with its pairs, and the reference attempt that follows records its
+own. The certified mode's counters (`take_cert_stats/0`) and a proof's
+recorder do see the alternatives' solves; neither is read by the pairing.

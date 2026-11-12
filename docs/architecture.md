@@ -80,10 +80,16 @@ questions asked of one round matcher, not one matching per bracket.
 `explain_round/3`, `bye_eligibility/2` and `Ainalrami.ByePreference.pair/3`
 - validates the roster and the options once, BEFORE a path is chosen, and
 the two pairing entries share one option-resolving wrapper; see
-`pair_next_round/2`'s "Input". Every key the engine stamps into the process
-dictionary is stamped inside a `try` whose `after` clears one list of
-round-scoped keys, so a call that raises leaves nothing for the next
-tournament in the process to read. A pairing handed to `explain_round/3`
+`pair_next_round/2`'s "Input". Nothing a round reads lives in the process
+dictionary: the round's inputs are one context value (`round_inputs/5`), and
+what changes while it is paired is a round state and a bracket state the
+cascade threads, so a call that raises leaves nothing for the next
+tournament in the process to read, and a context built in one process
+works in any other. What the dictionary still holds is write-only (the
+certified counters, a proof's recorder, the matcher's profile) or a setting
+a caller scopes on purpose (the log level, the matching walk). Until
+2026-11 the keys were stamped inside a `try` whose `after` cleared one list
+of round-scoped keys. A pairing handed to `explain_round/3`
 is checked against the round's active players before it is scored: a
 player left out is refused, not read as a bye. (2026-10-02; before that,
 `pair_later_round/2` was a second copy of the option handling that ignored
@@ -109,6 +115,12 @@ rung where they part. It carries an `edge_count` guard and an
 contributing different numbers of edges cannot be compared rung by rung -
 an accounting artifact that produced a wrong verdict before the guard
 existed.
+
+`explain_decisions/2` answers the other question: not how a pairing scores
+but how the engine chose it. It pairs the round as `pair_next_round/2` does
+and keeps, per bracket, each filter's decisions and what each beat, or the
+shortcut that answered the bracket and why its answer is the filters'
+([dutch-cascade.md, section 10](dutch-cascade.md#10-decision-records)).
 
 ### `Ainalrami.Matching` and `Ainalrami.WeightedMatching`
 
