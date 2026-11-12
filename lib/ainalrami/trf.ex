@@ -841,8 +841,13 @@ defmodule Ainalrami.Trf do
     # TRF26 carries a bye granted for a round not yet paired as a `240`
     # record, not as a column on the `001` line - so those columns come off
     # the players before their lines are written, and go out at the end.
+    # Not in a team event: there a `240` names TEAMS (`parse_240/3`), and a
+    # player's announced bye stays in the column, the one place left that
+    # says it about a player.
+    team? = team_event?(data)
     system = t[:point_system] || default_point_system()
-    {written, future_byes} = split_future_byes(players, dialect, system, team_rounds(t))
+    split_dialect = if team?, do: :engine, else: dialect
+    {written, future_byes} = split_future_byes(players, split_dialect, system, team_rounds(t))
     xxz? = dialect == :engine and opts[:xxz] == true
     {written, absentees} = split_absences(written, xxz?, system, team_rounds(t))
     max_round = Enum.reduce(written, 0, &max(&2, length(&1[:games] || [])))
@@ -851,17 +856,19 @@ defmodule Ainalrami.Trf do
     numeric? = dialect == :trf26 or opts[:numeric_extensions] == true
 
     header_lines(t, players, teams, xxr?, xxc?)
-    |> Kernel.++(point_system_lines(t[:point_system], dialect))
+    |> Kernel.++(point_system_lines(t[:point_system], dialect, team?))
     |> Kernel.++(free_point_lines(t[:free_points]))
     |> Kernel.++(legend_lines(opts[:column_legend], max_round))
     |> Kernel.++(Enum.map(written, &player_line/1))
     |> Kernel.++(Enum.map(teams, &team_line/1))
     |> Kernel.++(team_record_lines(t))
+    |> Kernel.++(team_bye_point_lines(t[:team_bye_points]))
     |> Kernel.++(xxr_line(t[:number_of_rounds], xxr?))
     |> Kernel.++(xxc_line(t[:initial_colour], xxc?))
     |> Kernel.++(xxz_line(absentees))
     |> Kernel.++(extension_lines(t, players, max_round, numeric?, dialect))
     |> Kernel.++(bye_lines(future_byes))
+    |> Kernel.++(team_bye_lines(t[:team_byes]))
     |> Enum.map_join("", &(&1 <> "\r\n"))
   end
 
@@ -982,6 +989,35 @@ defmodule Ainalrami.Trf do
     end)
   end
 
+  # A team event's `240` records (`tournament[:team_byes]`, `parse_240/3`):
+  # the layout `bye_lines/1` writes, with team numbers where the players'
+  # ranks go - one record per type per round, numbers sorted.
+  defp team_bye_lines(nil), do: []
+
+  defp team_bye_lines(byes) do
+    byes
+    |> Enum.flat_map(fn bye -> Enum.map(bye.teams, &{bye.type, bye.round, &1}) end)
+    |> Enum.uniq()
+    |> bye_lines()
+  end
+
+  # A team event's `299 F`/`H`/`Z` (`tournament[:team_bye_points]`,
+  # `parse_299/3`): match points right-aligned in 8-11, game points in
+  # 14-17, round and teams empty - every round, every team. The spec's own
+  # `299 +   2.0   2.5` layout.
+  defp team_bye_point_lines(nil), do: []
+
+  defp team_bye_point_lines(values) do
+    for type <- ~w(F H Z), value = values[type], value != nil do
+      []
+      |> place({1, 3}, "299")
+      |> place({5, 5}, type)
+      |> place({8, 11}, format_points(value[:match_points] || 0.0), align: :right)
+      |> place({14, 17}, format_points(value[:game_points] || 0.0), align: :right)
+      |> render()
+    end
+  end
+
   # `xxz: true` - see `serialize/2`. A `0000 - Z` standing alone in the
   # column of the round about to be paired, as the player's last column,
   # comes off the `001` line and goes out as one `XXZ` line, which is
@@ -1053,6 +1089,26 @@ defmodule Ainalrami.Trf do
   # `BBU` comes last on purpose - `BBW` drags the pairing-allocated bye with
   # it unless the bye has already been pinned, which is the reference's own
   # `usePairingAllocatedByeScore` behaviour and depends on the file's order.
+  # A team event cannot carry a PLAYER's full- or half-point bye value: its
+  # `299 F`/`299 H` is the team's (`parse_299/3`), and a player's value
+  # written there would come back as a team's match and game points. The
+  # reader never puts one into a team file's point system, so only a
+  # caller building the data by hand gets here - refused, not dropped.
+  defp point_system_lines(system, dialect, true) when is_map(system) do
+    case Enum.find([:full_point_bye, :half_point_bye], &(not is_nil(Map.get(system, &1)))) do
+      nil ->
+        point_system_lines(system, dialect)
+
+      field ->
+        raise ValidationError,
+          message:
+            "a team event's 299 F/H records are the teams' bye values, so the players' " <>
+              "#{inspect(field)} cannot be written - set tournament[:team_bye_points] instead"
+    end
+  end
+
+  defp point_system_lines(system, dialect, _team?), do: point_system_lines(system, dialect)
+
   defp point_system_lines(nil, _dialect), do: []
 
   # TRF26's own spelling: one `162` line - symbol at column 6 and the value
@@ -1115,7 +1171,7 @@ defmodule Ainalrami.Trf do
   # does not carry (TRF26 defines it as the tournament standings' score
   # from the games). Untyped, value right-aligned in 14-17, an optional
   # round in 20-22, and the starting ranks from 24 in four-character fields
-  # every five columns. The shape `parse_299/2` reads back.
+  # every five columns. The shape `parse_299/3` reads back.
   def free_point_lines(nil), do: []
   def free_point_lines([]), do: []
 
@@ -2323,6 +2379,16 @@ defmodule Ainalrami.Trf do
   `192`/`202`/`212`/`222` headers into `tournament[:type_code]`,
   `[:tie_breaks]`, `[:standings_order]` and `[:time_control_code]`.
 
+  In a TEAM event (a team `192` code, or - without a code FIDE's table
+  knows - any `310`, `320`, `330`, `362`, `352` or `300` record; never a
+  bare `013`) two of them mean something else: a `240` names TEAMS, into
+  `tournament[:team_byes]` (`[%{type:, round:, teams:}]`, no player's line
+  touched, refused for a round the file pairs the team in), and a typed
+  `299 F`/`H`/`Z` is the team's bye value, into
+  `tournament[:team_bye_points]` (`%{"H" => %{match_points:,
+  game_points:}}`). `serialize/2` writes both back, and in a team event
+  leaves a player's announced bye in its column.
+
   TRF26 team records: each `310` becomes a team (`:number`, `:name`,
   `:nickname`, `:strength`, `:match_points`, `:game_points`, `:final_rank`,
   `:player_ranks`), and when a file has any `310` its `013` lines are
@@ -2382,8 +2448,14 @@ defmodule Ainalrami.Trf do
       teams: [],
       accelerations: %{},
       acceleration_ranges: [],
-      byes: []
+      byes: [],
+      team_byes: []
     }
+
+    # A `240` and a `299 F/H/Z` mean different things in a team event (see
+    # `team_event_lines?/1`), and either can come before the records that
+    # say which event this is - so that is settled first, from the codes.
+    team? = team_event_lines?(lines)
 
     result =
       Enum.reduce(lines, empty, fn line, acc ->
@@ -2462,10 +2534,10 @@ defmodule Ainalrami.Trf do
             parse_point_system(acc, line)
 
           "240" ->
-            parse_240(acc, line)
+            parse_240(acc, line, team?)
 
           "299" ->
-            parse_299(acc, line)
+            parse_299(acc, line, team?)
 
           code when code in @bb_codes ->
             parse_bb_points(acc, code, line)
@@ -2515,6 +2587,7 @@ defmodule Ainalrami.Trf do
     |> attach_accelerations()
     |> attach_absences(played)
     |> attach_byes(played)
+    |> attach_team_byes(played)
   end
 
   # bbpPairings' point-system directives (`trf.cpp:1203-1232`) plus TRF16's
@@ -3261,7 +3334,16 @@ defmodule Ainalrami.Trf do
   # round further ahead it stays in `tournament[:byes]`, because the game
   # list cannot hold a gap. Type at column 5, round in 7-9, starting ranks
   # from 11 in four-character fields every five columns.
-  defp parse_240(acc, line) do
+  #
+  # In a TEAM event the same fields are TEAM numbers: the spec's own example
+  # is "two teams (26 and 47) getting a HPB in the third round", `240 H 003
+  # 026  047`, and its table makes the `H` mandatory for teams. Until
+  # 0.57.0 this read them as players' starting ranks, found that player 26
+  # had played round 3, and refused every team report with a requested team
+  # bye in it - with a perfectly confident message about the wrong player.
+  # Those go to `tournament[:team_byes]` (`attach_team_byes/2`), never near
+  # a player's line.
+  defp parse_240(acc, line, team?) do
     type = line |> read({5, 5}) |> String.upcase()
 
     unless type in ~w(F H Z) do
@@ -3269,13 +3351,57 @@ defmodule Ainalrami.Trf do
     end
 
     round = positive_field!(line, {7, 9}, line, "240", "round number")
-    ranks = read_id_fields(line, 11)
+    ids = read_id_fields(line, 11)
 
-    if ranks == [] do
+    if ids == [] do
       raise ValidationError, message: "240 line names nobody: #{line}"
     end
 
-    update_in(acc.byes, &(&1 ++ [%{type: type, round: round, ranks: ranks}]))
+    if team?,
+      do: update_in(acc.team_byes, &(&1 ++ [%{type: type, round: round, teams: ids}])),
+      else: update_in(acc.byes, &(&1 ++ [%{type: type, round: round, ranks: ids}]))
+  end
+
+  # The records only a team event has (TRF-2026: `310` teams, `320` the
+  # pairing-allocated bye "just for teams", `330` forfeited matches, `362`
+  # match points, `352` the boards' colours, `300` board orders).
+  @team_only_records ~w(310 320 330 362 352 300)
+
+  # Whether a file is a team event, from its record codes alone: the `192`
+  # type code when it names a system in FIDE's table (`Ainalrami.TypeCode`),
+  # otherwise any record only a team event has. Deliberately NOT a bare
+  # `013`: an individual open lists club teams in `013` lines for a team
+  # prize, and its `240`s are players' (Gacrux reads any `013` as a team
+  # event; an individual file read as one would lose every bye in it).
+  defp team_event_lines?(lines) do
+    codes = MapSet.new(lines, &String.slice(&1, 0, 3))
+    type_code = Enum.find_value(lines, &type_code_of_line/1)
+    team_event?(type_code, Enum.any?(@team_only_records, &MapSet.member?(codes, &1)))
+  end
+
+  defp type_code_of_line("192" <> rest), do: String.trim(rest)
+  defp type_code_of_line(_line), do: nil
+
+  @doc false
+  # The same decision on parsed data, for the writer: a team with a `310`
+  # number, or any of the team-only records, or a team `192` code.
+  def team_event?(%{tournament: t} = data) do
+    numbered? = Enum.any?(Map.get(data, :teams) || [], &is_integer(&1[:number]))
+
+    records? =
+      Enum.any?(
+        [:team_pab, :forfeited_matches, :team_point_system, :board_colours, :board_orders],
+        &(t[&1] not in [nil, [], "", %{}])
+      )
+
+    team_event?(t[:type_code], numbered? or records?)
+  end
+
+  defp team_event?(type_code, team_records?) do
+    case Ainalrami.TypeCode.parse(type_code || "") do
+      {:ok, %{team?: team?}} -> team?
+      :error -> team_records?
+    end
   end
 
   # `299` - TRF26's abnormal point assignments. Three shapes, of which this
@@ -3293,7 +3419,15 @@ defmodule Ainalrami.Trf do
   #     would change what one game is worth for one player, which the point
   #     system cannot express, and a rule read and dropped is the failure
   #     this module exists to prevent.
-  defp parse_299(acc, line) do
+  #
+  # In a team event a typed `F`/`H`/`Z` is the TEAM's bye: "teams getting
+  # half-point-byes (type: H) don't receive TD MP and N*D GP", match points
+  # in 8-11 and the team's game points in 14-17. Read as a player's bye
+  # value it made a four-board team's 2.0 game points every player's
+  # half-point bye worth two points. Kept in `tournament[:team_bye_points]`
+  # (`%{"H" => %{match_points:, game_points:}}`); a missing field is zero,
+  # as the spec says, and a line with neither says nothing and is refused.
+  defp parse_299(acc, line, team?) do
     type = line |> read({5, 5}) |> String.upcase()
     match_points = line |> read({8, 11}) |> parse_float()
     points = line |> read({14, 17}) |> parse_float()
@@ -3314,6 +3448,13 @@ defmodule Ainalrami.Trf do
       scoped? ->
         raise ValidationError,
           message: "299 line limited to a round or to named players is not supported: #{line}"
+
+      team? and type in ~w(F H Z) and is_nil(points) and is_nil(match_points) ->
+        raise ValidationError, message: "299 line has no point value: #{line}"
+
+      team? and type in ~w(F H Z) ->
+        value = %{match_points: match_points || 0.0, game_points: points || 0.0}
+        update_in(acc.tournament[:team_bye_points], &Map.put(&1 || %{}, type, value))
 
       is_nil(points) ->
         raise ValidationError, message: "299 line has no point value: #{line}"
@@ -3461,7 +3602,64 @@ defmodule Ainalrami.Trf do
           "but its 001 line already has #{inspect(result)} in that round"
   end
 
-  # `240` records, applied once every player is read - see `parse_240/2`.
+  # A team event's `240` records (`parse_240/3`), checked once every team
+  # and game is read and kept in `tournament[:team_byes]` as `[%{type:,
+  # round:, teams: [team number]}]`. No player's line is touched: a team's
+  # bye is the team's, and its players' columns say whatever they say (a
+  # blank or a `Z` - nobody was seated). A team number has to be a team's
+  # (a `310` number, a `013` team's place in the file). For a round already
+  # paired the team cannot also have been paired in it - a game for one of
+  # its players, a `U`, the `320` bye or a `330` forfeited match; for the
+  # round about to be paired it is how the team is left out
+  # (`Ainalrami.TeamReplay.next_round/3`), and further ahead it waits.
+  defp attach_team_byes(%{team_byes: []} = result, _played), do: Map.delete(result, :team_byes)
+
+  defp attach_team_byes(%{team_byes: byes} = result, played) do
+    rosters =
+      result.teams
+      |> Enum.with_index(1)
+      |> Map.new(fn {team, index} -> {Map.get(team, :number) || index, team.player_ranks} end)
+
+    by_rank = Map.new(result.players, &{&1[:rank], &1})
+    t = result.tournament
+    pab_teams = get_in(t, [:team_pab, :teams]) || []
+
+    for bye <- byes, team <- bye.teams do
+      ranks =
+        Map.get(rosters, team) ||
+          raise ValidationError,
+            message: "240 line names team #{team}, which no 310 or 013 line has"
+
+      if bye.round <= played do
+        paired? =
+          Enum.at(pab_teams, bye.round - 1) == team or
+            Enum.any?(
+              t[:forfeited_matches] || [],
+              &(&1[:round] == bye.round and team in [&1[:white], &1[:black]])
+            ) or
+            Enum.any?(ranks, fn rank ->
+              case by_rank[rank] && Enum.at(by_rank[rank][:games] || [], bye.round - 1) do
+                %{opponent_rank: opp} when is_integer(opp) -> true
+                %{result: result} when is_binary(result) -> String.upcase(result) == "U"
+                _ -> false
+              end
+            end)
+
+        if paired? do
+          raise ValidationError,
+            message:
+              "240 line gives team #{team} a #{bye.type} bye in round #{bye.round}, " <>
+                "but the file pairs the team in that round"
+        end
+      end
+    end
+
+    result
+    |> Map.delete(:team_byes)
+    |> put_in([:tournament, :team_byes], byes)
+  end
+
+  # `240` records, applied once every player is read - see `parse_240/3`.
   defp attach_byes(%{byes: []} = result, _played), do: Map.delete(result, :byes)
 
   defp attach_byes(%{byes: byes, players: players} = result, played) do

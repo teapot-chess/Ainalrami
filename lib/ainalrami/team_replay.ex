@@ -89,6 +89,13 @@ defmodule Ainalrami.TeamReplay do
       `330` record's white and black teams for a match with no boards.
     * **the pairing-allocated bye** - its players' `U` (or `+` with no
       opponent), or the team named for the round in a `320` record.
+    * **a half-point bye** the team asked for - a TRF26 `240 H` naming the
+      team (team numbers in a team event, as the spec's example has them).
+      Not paired: no opponent, no colour, no float, not the
+      pairing-allocated bye (so [C2] still allows that one later), and
+      not an arrival for 4.3.1's numbering. Its points are
+      `Ainalrami.Tiebreaks.Team.from_trf/2`'s - a drawn match unless a
+      `299 H` says otherwise.
     * **out** of the round's pairing otherwise - sat it out, not yet
       arrived, or withdrawn.
 
@@ -96,8 +103,9 @@ defmodule Ainalrami.TeamReplay do
   same reading the standings check uses (`362`, `320`, `330`). A team
   "won a match by forfeit" ([C2]) when that reading makes it a forfeit win -
   no board played and the opponent scored nothing, or a `330` record -
-  OpenPairings' reading of open question 6. A team whose players all hold an `F` has a
-  full-point bye, which [C2] also bars from the pairing-allocated bye.
+  OpenPairings' reading of open question 6. A team whose players all hold an `F`, or
+  that a `240 F` names, has a full-point bye, which [C2] also bars from the
+  pairing-allocated bye.
 
   ## Replaying a round (`check_round/4`)
 
@@ -471,7 +479,7 @@ defmodule Ainalrami.TeamReplay do
 
   @doc """
   Every team's rounds as the file records them: `%{tpn => %{round => record}}`,
-  a record being `%{kind: :match | :pab | :out, opponent:, played?:,
+  a record being `%{kind: :match | :pab | :half_bye | :out, opponent:, played?:,
   colour: :white | :black | nil, mp:, gp:, forfeit_win?:, full_bye?:}`.
   See the moduledoc.
   """
@@ -501,7 +509,10 @@ defmodule Ainalrami.TeamReplay do
 
           points = event.teams[team].rounds[r]
 
-          record = read_round(rounds, team, r, team_of, declared, Enum.at(pab_by_round, r - 1))
+          record =
+            rounds
+            |> read_round(team, r, team_of, declared, Enum.at(pab_by_round, r - 1))
+            |> requested_bye(points.kind)
 
           record =
             Map.merge(record, %{
@@ -601,6 +612,16 @@ defmodule Ainalrami.TeamReplay do
         }
     end
   end
+
+  # A round the team was not paired in, which `Tiebreaks.Team.from_trf/2`
+  # scores as a requested bye (a TRF26 `240` naming the team): a
+  # half-point bye is its own kind - not paired, no opponent, no colour, no
+  # float, and not the pairing-allocated bye, so [C2] (2.1.2) still lets
+  # the team have that one; a full-point bye stays out of the round and
+  # bars the pairing-allocated bye, as its players' `F`s already did.
+  defp requested_bye(%{kind: :out} = record, :half_bye), do: %{record | kind: :half_bye}
+  defp requested_bye(%{kind: :out} = record, :full_bye), do: %{record | full_bye?: true}
+  defp requested_bye(record, _kind), do: record
 
   # The team's colour (1.6.1, board 1's) from the first board that has one:
   # board 1 itself, or - when a `300` record seats that player lower - the
@@ -841,7 +862,8 @@ defmodule Ainalrami.TeamReplay do
   a player is not free when the file already records the round for them -
   a zero-, half- or full-point bye in its column, or a TRF26 `240` record -
   which is how an arbiter tells the engine, before the pairing, that
-  somebody will not play. A team none of whose players is free sits the
+  somebody will not play. A `240` naming the TEAM for the round (any type)
+  takes the whole team out, whatever its players' columns say. A team none of whose players is free sits the
   round out (`out`); if it was paired before, it is passed as `:absent`
   and keeps its place in 4.3.1's numbering, as in the replay.
   """
@@ -850,10 +872,19 @@ defmodule Ainalrami.TeamReplay do
     {rosters, _team_of} = rosters(parsed)
     by_rank = Map.new(parsed.players, &{&1.rank, &1})
 
+    # A team's own bye for the round, TRF26 `240` with team numbers (or
+    # `--half-bye-teams`), whatever its players' columns say.
+    with_bye =
+      for bye <- parsed.tournament[:team_byes] || [],
+          bye.round == round,
+          team <- bye.teams,
+          into: MapSet.new(),
+          do: team
+
     {field, out} =
       rosters
-      |> Enum.split_with(fn {_team, ranks} ->
-        Enum.any?(ranks, &free?(by_rank[&1], round))
+      |> Enum.split_with(fn {team, ranks} ->
+        not MapSet.member?(with_bye, team) and Enum.any?(ranks, &free?(by_rank[&1], round))
       end)
 
     field = field |> Enum.map(&elem(&1, 0)) |> Enum.sort()

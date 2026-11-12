@@ -315,7 +315,7 @@ defmodule Ainalrami.TeamCLI do
 
     unless round.out == [] do
       Log.detail(
-        "sitting the round out (every player has a bye recorded): " <>
+        "sitting the round out (a 240 team bye, or every player has a bye recorded): " <>
           Enum.map_join(round.out, ", ", &"team #{&1}")
       )
     end

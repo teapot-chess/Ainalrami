@@ -825,3 +825,27 @@ and one B test.
 **Validation.** The whole-round test against the brute-force reference,
 both moved to these readings, on seeds 1-3,000,000: 12,393,746 rounds, 0
 failures, 0 errors ([validation.md](validation.md#team-swiss-pairings-c046)).
+
+## A team's requested bye in TRF26, 2026-11-12 (0.57.0)
+
+C.04.6 has no article on a bye a team asks for; it is the competition's to
+allow, and Held's example has three half-point byes in round 1. TRF-2026
+records them in its Bye Section, `240`, "for both individuals and teams",
+mandatory for a team's `H`, the IDs being team numbers in a team event
+(the spec's example, `240 H 003  026  047`, is "two teams (26 and 47)"),
+with the value in `299 H`: "teams getting half-point-byes (type: H) don't
+receive TD MP and N*D GP". The readings:
+
+| question | reading | where |
+|---|---|---|
+| Is a team event's `240` about teams? | yes, always; a bare `013` does not make a team event | `Trf.parse/1` (`team_event_lines?/1`) |
+| What is a half-point bye worth? | `299 H`'s MP and GP, else a drawn match and a draw on every board | `Tiebreaks.Team.from_trf/2` |
+| Is the team paired that round? | no: not in the field, no opponent, colour or float | `TeamReplay.history/1`, `:half_bye` |
+| Does it bar the pairing-allocated bye ([C2], 2.1.2)? | no: 2.1.2 names only that bye and a forfeit win | `state_for/4`'s `had_pab?`, `won_by_forfeit?` |
+| Does it count as arriving (4.3.1)? | no: only a match or the pairing-allocated bye does; a team that arrived earlier is passed as `absent:` in the bye's round, as Held's later byes are | `state_for/4` |
+| A `240 F`? | a full-point bye: a won match, and it bars the pairing-allocated bye, as its players' `F`s already did | `from_trf/2`, `TeamReplay` |
+
+Gacrux reads a team file's `240` as teams too (`check_competitor`).
+OpenPairings writes the record from 2026-11-12 (team Swiss only).
+`test/ainalrami/team_half_bye_test.exs` replays the spec's example and 30
+generated events with random half-point byes, round for round.

@@ -754,7 +754,9 @@ round's floaters) and the teams sitting the round out passed as absent; a
 team round robin gets the next round of the Berger table. A team sits the
 round out when every one of its players already has the round recorded -
 a zero-, half- or full-point bye in the column or a TRF26 `240` record -
-which is how an arbiter says so before the pairing. A fresh team event
+which is how an arbiter says so before the pairing - or when a `240`
+names the team itself (a team's own bye, `--half-bye-teams=2,5` for a
+half-point one). A fresh team event
 needs its `192` code: with no games yet, nothing else says it is one.
 
 The output is JaVaFo's pairing list one level up - a count line, then one
@@ -805,6 +807,7 @@ Swiss) exits 2.
 | `--team-type=a\|b\|none --score=mp\|gp --secondary=yes\|no` | colour preferences, primary score, whether the secondary score allocates colours - in place of the `192` code's |
 | `--initial-colour=white\|black`, `--rounds=N` | in place of `152` and `142` |
 | `--absent-teams=2,5` | (`-p`, `-x`) these teams sit the round out: every free player a zero-point bye, which is how the file says it |
+| `--half-bye-teams=2,5` | (`-p`, `-x`, a team Swiss) these teams take a requested half-point bye: not paired, as a TRF26 `240 H` naming them says **(0.57.0)** |
 | `--max-upfloater-sets=N` | C.04.6 3.5's search budget (default 200,000) |
 | `--explain-limit=N` | (`-x`) entries kept per list of the account (default 10) |
 | `--team-forbidden=3,11,16/1,8@1-2` | (`-p`, `-x`, `-c`) teams that must not meet, by team number; added to the file's `XXO team-forbidden` records (**not FIDE**, see below) |
@@ -986,7 +989,8 @@ spelling; team and round-robin files are TRF26 already), and `-p`, `-x`,
 | `162` | a non-standard point system as one line - `:trf26` only, `:engine` uses `BB*` instead |
 | `299` | free points and point-system overrides `162`/`BB*` cannot say - mostly written by both dialects; the forfeit-loss override is `:trf26` only, since `:engine` says it with `BBF` |
 | `250` / `260` | acceleration and forbidden pairs (above) - written by both dialects; `:trf26` groups acceleration into ranges instead of one line per player per round |
-| `240` | a bye for a round not yet paired, moved off the player's own row - `:trf26` only; `:engine` leaves it as an ordinary column |
+| `240` | a bye for a round not yet paired, moved off the player's own row - `:trf26` only; `:engine` leaves it as an ordinary column. In a TEAM event a `240` names teams (written by both dialects from `tournament[:team_byes]`), and a player's own announced bye stays in the column **(0.57.0)** |
+| `299 F`/`H`/`Z` in a team event | the team's bye value - match points in 8-11, game points in 14-17 (`tournament[:team_bye_points]`); without one a half-point bye is a drawn match (TD MP, N*D GP), a full-point bye a won one **(0.57.0)** |
 | `192` / `202` / `212` / `222` | tournament type code, tie-breaks, standings order, time control code - written by both dialects whenever the data carries them |
 
 The type code is checked against FIDE's own table
@@ -1006,6 +1010,21 @@ points), `330` (forfeited matches) and `300` (a team's board order in one
 match: board 1's colour is read from it, and the team tie-breaks number
 the boards by it) are read and written; `801`, `802` and national-rating
 records are not read.
+
+A team event - the `192` code says so, or (without a code the table
+knows) the file has any record only a team event has: `310`, `320`,
+`330`, `362`, `352`, `300` - reads its `240` records as TEAM numbers, as
+TRF-2026's example has them ("two teams (26 and 47) getting a HPB in the
+third round", `240 H 003  026  047`), into `tournament[:team_byes]`; a
+bare `013` does not make one, since an individual open lists club teams
+that way. A team's half-point bye is not a pairing: no opponent, colour or
+float, not the pairing-allocated bye (C.04.6 2.1.2 bars only that and a
+forfeit win), and its match and game points are the `299 H`'s or a drawn
+match's. `-c` replays rounds around it, `-p` leaves a team named for the
+next round out, and `--half-bye-teams=2,5` says the same on the command
+line. A `240` for a round the file pairs the team in is refused. Until
+0.57.0 a team `240` was read as players' starting ranks, and `-c` refused
+every team report with one.
 
 ## Organiser deviations (not FIDE)
 

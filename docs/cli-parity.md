@@ -77,7 +77,8 @@ unless said otherwise).
 | `initial_colour:` | the drawing of lots | `--initial-colour=white\|black` **(new for -p/-x/-c)** | `152` |
 | `round:` | the round number | - (the file's history) | the games |
 | `expected_rounds:` | the round count | `--rounds=N` **(new)** | `142` |
-| `absent:` | teams that arrived and sit this round out | `--absent-teams=2,5` **(new)** | every player of the team with the round recorded (`Z`/`H`/`F`, `240`) |
+| `absent:` | teams that arrived and sit this round out | `--absent-teams=2,5` **(new)** | every player of the team with the round recorded (`Z`/`H`/`F`), or a `240 Z` naming the team |
+| (not in the field; scored as a drawn match in later rounds) | a requested half-point bye (`teams.half_bye_rounds`) | `--half-bye-teams=2,5` **(0.57.0)** | `240 H` naming the TEAM, value `299 H` |
 | `max_upfloater_sets:` | default | `--max-upfloater-sets=N` **(new)** | - |
 | `explain: true` | always | `-x` | - |
 | `explain_limit:` | default | `--explain-limit=N` **(new)** | - |
