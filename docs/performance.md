@@ -648,7 +648,10 @@ one build after the other.
 ### Same answers
 
 * `bench/scale.exs` (`SCALE_REF=v0.58.0`, 100, 400, 600 and 10,000
-  players, seven rounds): 28 of 28 rounds identical.
+  players, seven rounds): 28 of 28 rounds identical. Its generator
+  (`SCALE_GEN=1`, 1,000 tournaments each at 40, 100, 150 and 300
+  players, eleven rounds): 44,000 rounds, digest files byte for byte the
+  same.
 * `tools/perf_diff.exs`, the full standing corpus on the VM, old against
   new. On default settings every round was identical: small 370,781,
   large 5,497, early 1,980, and `f_nofast` (the reference path on small
