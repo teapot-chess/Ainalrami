@@ -23,7 +23,8 @@
 #
 # The options left out are drawn from each seed, so the corpus covers every
 # axis the generator has. Environment: CORPUS_CONCURRENCY (default 4),
-# CORPUS_DIR (scratch files, default tmp/team_cli_corpus).
+# CORPUS_DIR (scratch files, default tmp/team_cli_corpus),
+# CORPUS_BAKU=1 (every team Swiss Baku-accelerated).
 #
 # Prints one line per failure and a summary; exits 1 on any failure.
 
@@ -77,7 +78,10 @@ defmodule TeamCliCorpus do
   end
 
   def run_one(system, seed, dir) do
-    g = TeamGenerator.run(seed: seed, system: system)
+    # CORPUS_BAKU=1: every team Swiss accelerated (C.04.7), its 250s
+    # written, so -c and each cut file's -p pair on the virtual points.
+    baku = system == :swiss and System.get_env("CORPUS_BAKU") == "1"
+    g = TeamGenerator.run([seed: seed, system: system] ++ if(baku, do: [baku: true], else: []))
     base = Path.join(dir, "#{system}_#{seed}")
     full = base <> ".trf"
     File.write!(full, g.text)
@@ -185,7 +189,10 @@ defmodule TeamCliCorpus do
     expected_boards =
       for {{w, b}, match} <- Enum.with_index(matches, 1),
           {{x, y}, board} <-
-            Enum.with_index(Enum.zip(padded(expected.lineups[w], boards), padded(expected.lineups[b], boards)), 1) do
+            Enum.with_index(
+              Enum.zip(padded(expected.lineups[w], boards), padded(expected.lineups[b], boards)),
+              1
+            ) do
         if rem(board, 2) == 1, do: [match, board, x, y], else: [match, board, y, x]
       end
 
@@ -193,13 +200,17 @@ defmodule TeamCliCorpus do
 
     cond do
       Enum.sort(matches) != Enum.sort(expected.matches) ->
-        ["#{tag}: matches #{inspect(Enum.sort(matches))} vs generator #{inspect(Enum.sort(expected.matches))}"]
+        [
+          "#{tag}: matches #{inspect(Enum.sort(matches))} vs generator #{inspect(Enum.sort(expected.matches))}"
+        ]
 
       bye != expected_bye ->
         ["#{tag}: bye #{inspect(bye)} vs generator #{inspect(expected_bye)}"]
 
       boards_out != expected_boards ->
-        ["#{tag}: board lines differ: #{inspect(Enum.take(boards_out -- expected_boards, 3))} vs #{inspect(Enum.take(expected_boards -- boards_out, 3))}"]
+        [
+          "#{tag}: board lines differ: #{inspect(Enum.take(boards_out -- expected_boards, 3))} vs #{inspect(Enum.take(expected_boards -- boards_out, 3))}"
+        ]
 
       true ->
         []
@@ -237,7 +248,9 @@ started = System.monotonic_time(:millisecond)
       try do
         TeamCliCorpus.run_one(system, seed, dir)
       rescue
-        e -> {0, ["#{system} seed #{seed}: crashed - #{Exception.format(:error, e, __STACKTRACE__)}"]}
+        e ->
+          {0,
+           ["#{system} seed #{seed}: crashed - #{Exception.format(:error, e, __STACKTRACE__)}"]}
       end
     end,
     max_concurrency: concurrency,
