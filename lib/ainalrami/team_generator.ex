@@ -54,8 +54,13 @@ defmodule Ainalrami.TeamGenerator do
       team sits out every later round the same way), players announced
       absent (`:absent_player_pct`: a zero-point bye,
       the players below moving up a board, a reserve filling in - never so
-      many that a team cannot fill its boards), and lineups out of roster
-      order (`:out_of_order_pct`, with a `300` record);
+      many that a team cannot fill its boards), lineups out of roster
+      order (`:out_of_order_pct`, with a `300` record), and - a Swiss
+      only, default 0 - teams taking a requested half-point bye
+      (`:half_bye_team_pct`: a TRF26 `240 H` naming the team, its players
+      a zero-point bye; worth a drawn match unless `:half_bye_points`
+      `{mp, gp}` says otherwise, then also a `299 H`; `:half_byes`,
+      `%{round => [team]}`, names them instead);
     * a team tie-break list (`:tie_breaks`, the codes after the score:
       `["GPTS", "EDE"]`); the file then carries the score and the list as
       `212` and the final ranks they give in the `310` records.
@@ -115,6 +120,7 @@ defmodule Ainalrami.TeamGenerator do
       played_now: MapSet.new(),
       arrived: MapSet.new(),
       byes: %{},
+      half_byes: %{},
       forfeits: [],
       orders: [],
       pairings: %{},
@@ -262,6 +268,9 @@ defmodule Ainalrami.TeamGenerator do
       absent_team_pct: pct.(:absent_team_pct, [0, 5, 10]),
       withdraw_pct: opts |> Keyword.get(:withdraw_pct, 0) |> pct!(:withdraw_pct),
       absent_player_pct: pct.(:absent_player_pct, [0, 5, 15]),
+      half_bye_team_pct: half_bye_team_pct(opts, system),
+      half_byes: given_half_byes(opts, system),
+      half_bye_points: half_bye_points(opts, boards, d),
       out_of_order_pct: pct.(:out_of_order_pct, [0, 10, 30]),
       tie_breaks: tie_breaks
     }
@@ -316,6 +325,9 @@ defmodule Ainalrami.TeamGenerator do
     st = draw_withdrawals(st, r, ctx)
     absent_teams = draw_absent_teams(st, ctx)
     present = Enum.reject(1..ctx.teams, &(&1 in absent_teams))
+    half_byes = draw_half_byes(present, r, ctx)
+    present = present -- half_byes
+    absent_teams = Enum.sort(absent_teams ++ half_byes)
     absent_players = draw_absent_players(present, ctx)
 
     case pairing(st, r, present, ctx) do
@@ -356,12 +368,32 @@ defmodule Ainalrami.TeamGenerator do
         # the table's free team as well.
         paired = Enum.flat_map(matches, fn {a, b} -> [a, b] end) ++ List.wrap(bye)
 
+        # A requested half-point bye scores its own value (`240 H`, and a
+        # `299 H` when that is not a drawn match).
+        {hb_mp, hb_gp} = ctx.half_bye_points
+
         st =
           Enum.reduce(1..ctx.teams, st, fn t, st ->
-            if t in paired,
-              do: st,
-              else: %{st | mp: Map.update!(st.mp, t, &(&1 + ctx.points.loss))}
+            cond do
+              t in paired ->
+                st
+
+              t in half_byes ->
+                %{
+                  st
+                  | mp: Map.update!(st.mp, t, &(&1 + hb_mp)),
+                    gp: Map.update!(st.gp, t, &(&1 + hb_gp))
+                }
+
+              true ->
+                %{st | mp: Map.update!(st.mp, t, &(&1 + ctx.points.loss))}
+            end
           end)
+
+        st =
+          if half_byes == [],
+            do: st,
+            else: %{st | half_byes: Map.put(st.half_byes, r, half_byes)}
 
         arrived =
           if ctx.system == :swiss,
@@ -378,6 +410,7 @@ defmodule Ainalrami.TeamGenerator do
                  matches: matches,
                  bye: if(ctx.system == :swiss, do: bye),
                  free: if(ctx.system == :round_robin, do: bye),
+                 half_byes: half_byes,
                  lineups: lineups
                })
          }}
@@ -407,6 +440,82 @@ defmodule Ainalrami.TeamGenerator do
     withdrawn = MapSet.to_list(st.withdrawn)
     absent = Enum.sort(Enum.uniq(absent ++ withdrawn))
     if ctx.teams - length(absent) < 2, do: withdrawn, else: absent
+  end
+
+  # Requested half-point byes (`:half_bye_team_pct`, a Swiss only): drawn
+  # from the teams still in the round, never leaving fewer than two to
+  # pair. Nothing is drawn at 0, the default, so every seed recorded before
+  # this existed still generates the bytes it did. `:half_byes` (`%{round =>
+  # [team]}`) names them instead, for a round it lists - a team out of the
+  # round anyway is skipped.
+  defp draw_half_byes(present, r, %{half_byes: %{} = given})
+       when is_map_key(given, r) do
+    half = Enum.filter(present, &(&1 in Map.fetch!(given, r)))
+
+    if length(present) - length(half) < 2,
+      do: raise(ArgumentError, ":half_byes leaves fewer than two teams to pair in round #{r}"),
+      else: half
+  end
+
+  defp draw_half_byes(_present, _r, %{half_bye_team_pct: 0}), do: []
+
+  defp draw_half_byes(present, _r, ctx) do
+    half = for t <- present, :rand.uniform(100) <= ctx.half_bye_team_pct, do: t
+    if length(present) - length(half) < 2, do: [], else: half
+  end
+
+  defp given_half_byes(opts, system) do
+    case Keyword.get(opts, :half_byes) do
+      nil ->
+        nil
+
+      %{} = given when system == :swiss ->
+        given
+
+      %{} ->
+        raise ArgumentError,
+              ":half_byes is for a team Swiss - a round robin's table fixes every match"
+
+      other ->
+        raise ArgumentError, ":half_byes - %{round => [team]}, not #{inspect(other)}"
+    end
+  end
+
+  defp half_bye_team_pct(opts, system) do
+    pct = opts |> Keyword.get(:half_bye_team_pct, 0) |> pct!(:half_bye_team_pct)
+
+    if pct > 0 and system != :swiss,
+      do:
+        raise(
+          ArgumentError,
+          ":half_bye_team_pct is for a team Swiss - a round robin's table fixes every match"
+        )
+
+    pct
+  end
+
+  # The half-point bye's `{match points, game points}`: TRF-2026's default,
+  # a drawn match and a draw on every board, unless `:half_bye_points`
+  # gives another (written as a `299 H`).
+  defp half_bye_points(opts, boards, draw) do
+    case Keyword.get(opts, :half_bye_points) do
+      nil ->
+        {draw * 1.0, 0.5 * boards}
+
+      {mp, gp} when is_number(mp) and is_number(gp) ->
+        {mp * 1.0, gp * 1.0}
+
+      other ->
+        raise ArgumentError,
+              ":half_bye_points - {match points, game points}, not #{inspect(other)}"
+    end
+  end
+
+  defp d_mp(ctx), do: ctx.points.draw
+
+  # `%{round => [team]}` as TRF26 `240 H` records.
+  defp team_byes(half_byes) do
+    for {r, teams} <- Enum.sort(half_byes), do: %{type: "H", round: r, teams: Enum.sort(teams)}
   end
 
   # Announced absences, never so many that a team cannot fill its boards.
@@ -774,6 +883,17 @@ defmodule Ainalrami.TeamGenerator do
         teams: for(r <- 1..played//1, do: Map.get(st.byes, r, 0))
       })
       |> put_if(st.forfeits != [], :forfeited_matches, Enum.reverse(st.forfeits))
+      |> put_if(st.half_byes != %{}, :team_byes, team_byes(st.half_byes))
+      |> put_if(
+        st.half_byes != %{} and ctx.half_bye_points != {d_mp(ctx), 0.5 * ctx.boards},
+        :team_bye_points,
+        %{
+          "H" => %{
+            match_points: elem(ctx.half_bye_points, 0),
+            game_points: elem(ctx.half_bye_points, 1)
+          }
+        }
+      )
       |> put_if(st.orders != [], :board_orders, Enum.reverse(st.orders))
       |> put_if(ctx.tie_breaks != nil, :standings_order, ctx.tie_breaks)
 

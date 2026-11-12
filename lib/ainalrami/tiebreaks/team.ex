@@ -235,6 +235,7 @@ defmodule Ainalrami.Tiebreaks.Team do
           do: {{f.round, f.white, f.black}, winner}
 
     pab_by_round = get_in(tournament, [:team_pab, :teams]) || []
+    team_byes = team_byes(tournament, points)
 
     entries =
       for {team, _ranks} <- rosters do
@@ -244,6 +245,7 @@ defmodule Ainalrami.Tiebreaks.Team do
               Map.get(games, {team, r}, [])
               |> trf_match(team_of, points, Enum.at(pab_by_round, r - 1) == team)
               |> declared_forfeit(team, r, forfeited, points)
+              |> requested_bye(Map.get(team_byes, {team, r}))
 
             {r, match}
           end)
@@ -413,6 +415,45 @@ defmodule Ainalrami.Tiebreaks.Team do
   end
 
   defp declared_forfeit(m, _team, _r, _forfeited, _points), do: m
+
+  # A team event's requested byes, TRF26 `240` with team numbers
+  # (`tournament[:team_byes]`): `%{{team, round} => %Match{}}`. Their value
+  # is the `299` record's for the type when the file has one, otherwise
+  # what TRF-2026's "Abnormal Assignment points" says a team does receive:
+  # a half-point bye "TD MP and N*D GP" (a drawn match, a draw on every
+  # board), a full-point bye "TW MP and N*W GP", a zero-point bye nothing.
+  # The boards are left empty, as for a zero-point bye: Article 12's board
+  # sums read the kind (`unplayed_boards/3`).
+  defp team_byes(tournament, points) do
+    values = Map.get(tournament, :team_bye_points) || %{}
+    n = points.boards
+
+    defaults = %{
+      "H" => {:half_bye, points.match.draw, points.game.draw * n},
+      "F" => {:full_bye, points.match.win, points.game.win * n},
+      "Z" => {:zero_bye, points.match.loss, 0.0}
+    }
+
+    for bye <- Map.get(tournament, :team_byes) || [],
+        {kind, mp, gp} = Map.fetch!(defaults, bye.type),
+        team <- bye.teams,
+        into: %{} do
+      value = values[bye.type] || %{}
+
+      {{team, bye.round},
+       %Match{
+         kind: kind,
+         mp: (value[:match_points] || mp) * 1.0,
+         gp: (value[:game_points] || gp) * 1.0
+       }}
+    end
+  end
+
+  # The requested bye replaces only a round the team was not paired in -
+  # `Ainalrami.Trf.parse/1` refuses a file that pairs it as well, and a
+  # caller building the data by hand gets the pairing, which happened.
+  defp requested_bye(%Match{kind: :zero_bye, opponent: nil}, %Match{} = bye), do: bye
+  defp requested_bye(match, _bye), do: match
 
   # A `330` record's result: `+-`, `-+`, `--`, or TieBreakServer's
   # spellings `10 WL WZ`, `01 LW ZW`, `00 LL ZZ`. Anything else is not a

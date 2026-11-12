@@ -135,7 +135,8 @@ defmodule Ainalrami.CLI do
                    absent-team-pct absent-player-pct out-of-order-pct
                    groups soft-pairs soft-position team-forbidden team-soft-pairs
                    forbidden bye-exclude virtual-points baku-group-a half-bye zero-bye
-                   full-bye absent-teams judge points max-upfloater-sets explain-limit
+                   full-bye absent-teams half-bye-teams half-bye-team-pct judge points
+                   max-upfloater-sets explain-limit
                    cap-rounds max-candidates dialect proof system provisional-rating)
 
   # `-g` options that only an individual tournament has, and the ones only
@@ -146,7 +147,8 @@ defmodule Ainalrami.CLI do
                                  double-forfeit-pct odd-results-pct unset unset-chance groups system)
   @team_generator_flags ~w(teams boards reserves cycles team-type score secondary
                            match-points pab forfeit-match-points match-forfeit-pct
-                           absent-team-pct absent-player-pct out-of-order-pct)
+                           absent-team-pct absent-player-pct out-of-order-pct
+                           half-bye-team-pct)
 
   # `-c`'s (and a team file's `-p`/`-x`) exit code when the rounds could not be replayed at all because
   # the file's pairing system is not one this checker replays - distinct
@@ -637,6 +639,7 @@ defmodule Ainalrami.CLI do
     "zero-bye" => [:pair, :explain],
     "full-bye" => [:pair, :explain],
     "absent-teams" => [:pair, :explain],
+    "half-bye-teams" => [:pair, :explain],
     "cascade-order" => [:pair],
     "proof" => [:pair],
     "judge" => [:explain],
@@ -680,7 +683,7 @@ defmodule Ainalrami.CLI do
                       cascade-order proof)
   @team_swiss_only ~w(team-type score secondary max-upfloater-sets explain-limit
                       team-forbidden team-soft-pairs)
-  @bye_flags ~w(half-bye zero-bye full-bye absent-teams)
+  @bye_flags ~w(half-bye zero-bye full-bye absent-teams half-bye-teams)
 
   defp with_input_flags(parsed, flags) do
     parsed
@@ -1052,6 +1055,8 @@ defmodule Ainalrami.CLI do
               do: {rank, "Z"}
       end
 
+    parsed = with_half_bye_teams(parsed, flags, played)
+
     case byes ++ team_byes do
       [] ->
         parsed
@@ -1070,6 +1075,51 @@ defmodule Ainalrami.CLI do
           end
 
         %{parsed | players: players}
+    end
+  end
+
+  # `--half-bye-teams=2,5`: those teams take a requested half-point bye in
+  # the round about to be paired - exactly what a TRF26 `240 H` naming the
+  # teams says (`Ainalrami.Trf`'s `parse_240/3`), so it becomes one, in
+  # `tournament[:team_byes]`, and `TeamReplay.next_round/3` leaves the
+  # teams out. Its value only reaches the rounds after this one, which the
+  # file will record. A team already out of the round by a team record, or
+  # also named by `--absent-teams`, is refused: two answers to one question.
+  defp with_half_bye_teams(parsed, flags, played) do
+    case ranks_of(flags, "half-bye-teams") do
+      [] ->
+        parsed
+
+      teams ->
+        round = played + 1
+        known = MapSet.new(TeamReplay.team_numbers(parsed))
+        absent = MapSet.new(ranks_of(flags, "absent-teams"))
+
+        already =
+          for bye <- parsed.tournament[:team_byes] || [],
+              bye.round == round,
+              team <- bye.teams,
+              into: MapSet.new(),
+              do: team
+
+        for team <- teams do
+          cond do
+            not MapSet.member?(known, team) ->
+              refuse("--half-bye-teams names team #{team}, which the file does not have")
+
+            MapSet.member?(absent, team) ->
+              refuse("team #{team} is in both --half-bye-teams and --absent-teams")
+
+            MapSet.member?(already, team) ->
+              refuse("the file already records team #{team}'s round #{round}")
+
+            true ->
+              :ok
+          end
+        end
+
+        bye = %{type: "H", round: round, teams: teams |> Enum.uniq() |> Enum.sort()}
+        update_in(parsed.tournament[:team_byes], &((&1 || []) ++ [bye]))
     end
   end
 
@@ -1640,6 +1690,7 @@ defmodule Ainalrami.CLI do
             match_forfeit_pct:
               bounded_pct(option(flags, "match-forfeit-pct"), "match-forfeit-pct"),
             absent_team_pct: bounded_pct(option(flags, "absent-team-pct"), "absent-team-pct"),
+            half_bye_team_pct: half_bye_team_pct_option(flags),
             absent_player_pct:
               bounded_pct(option(flags, "absent-player-pct"), "absent-player-pct"),
             out_of_order_pct: bounded_pct(option(flags, "out-of-order-pct"), "out-of-order-pct"),
@@ -1667,6 +1718,20 @@ defmodule Ainalrami.CLI do
 
   # `--match-format` on a team event: a team round robin's (`XXM`); a team
   # Swiss has none in OpenPairings either.
+  # `--half-bye-team-pct=N`: teams taking a requested half-point bye, a
+  # Swiss only - a round robin's table has already decided who plays whom.
+  defp half_bye_team_pct_option(flags) do
+    case bounded_pct(option(flags, "half-bye-team-pct"), "half-bye-team-pct") do
+      nil ->
+        nil
+
+      pct ->
+        if team_system_option(flags) == :round_robin,
+          do: refuse("--half-bye-team-pct is for a team Swiss, not a team round robin"),
+          else: pct
+    end
+  end
+
   defp team_match_format_option(flags) do
     cond do
       "--match-format" not in flags -> nil
@@ -2019,7 +2084,8 @@ defmodule Ainalrami.CLI do
               given(flags, ~w(force absent soft-pairs soft-position groups) ++ @individual_only) ->
             {:exit, usage_error("--#{flag} is for an individual tournament, not a team event")}
 
-          (flag = given(flags, @team_swiss_only)) && kind == :team_round_robin ->
+          (flag = given(flags, ["half-bye-teams" | @team_swiss_only])) &&
+              kind == :team_round_robin ->
             {:exit, usage_error("--#{flag} is for a team Swiss, not a team round robin")}
 
           (parsed.tournament[:pairing_groups] || []) != [] ->
@@ -2098,7 +2164,7 @@ defmodule Ainalrami.CLI do
 
   defp individual_only(parsed, flags) do
     cond do
-      flag = given(flags, ~w(lineups boards absent-teams) ++ @team_swiss_only) ->
+      flag = given(flags, ~w(lineups boards absent-teams half-bye-teams) ++ @team_swiss_only) ->
         {:exit, usage_error("--#{flag} is for a team event, and this file is not one")}
 
       PairingInput.team_apart?(parsed.tournament) ->
@@ -2955,7 +3021,9 @@ Round #{round_number} - #{boards} board#{plural(boards)} over " <>
       flag =
           given(
             flags,
-            DubovCLI.refused_flags() ++ @team_swiss_only ++ ~w(lineups boards absent-teams)
+            DubovCLI.refused_flags() ++
+                @team_swiss_only ++
+                ~w(lineups boards absent-teams half-bye-teams)
           ) ->
         {:exit, usage_error("--#{flag} is not for the #{name}")}
 
@@ -3905,6 +3973,8 @@ Round #{round_number} - #{boards} board#{plural(boards)} over " <>
       (a Z/H/F bye or 240 record). -x explains the round (bye, brackets,
       upfloater sets, colour rules).
       --absent-teams=2,5   (-p, -x) these teams sit the round out
+      --half-bye-teams=2,5 (-p, -x, a team Swiss) these teams take a requested
+                           half-point bye (as a TRF26 240 H naming them)
       --team-type=a|b|none --score=mp|gp --secondary=yes|no
                            (-p, -x, -c, a team Swiss) in place of the 192 code's
       --rounds=N --initial-colour=white|black   as for an individual file
@@ -3937,6 +4007,7 @@ Round #{round_number} - #{boards} board#{plural(boards)} over " <>
       --match-points=2,1,0 --pab=draw|win --forfeit-match-points=N
       --forfeit-pct --match-forfeit-pct --absent-team-pct
       --absent-player-pct --out-of-order-pct --draw-rate
+      --half-bye-team-pct  (a Swiss) teams taking a requested half-point bye
       --tie-breaks=MPTS,GPTS,EDE         212 and the teams' final ranks
     """)
   end

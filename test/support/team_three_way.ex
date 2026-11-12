@@ -182,7 +182,10 @@ defmodule Ainalrami.Test.TeamThreeWay do
       announced for the round not yet paired) out of the `001` line into a
       `240 Z` record of PLAYER numbers. Gacrux reads a `240` in a team file
       as TEAM numbers and refuses the file (`### Error 401`, "Record 240
-      names team 27, the tournament has 11 teams").
+      names team 27, the tournament has 11 teams"). Since 0.57.0 Ainalrami
+      reads a team file's `240` as teams too and leaves a player's `Z` in
+      the column, so no such record is written any more; the `240 Z`
+      handling below stays for files written before.
 
   And there is no form of round `k`'s own `Z` that all three read the
   same way. Put back into round `k`'s `001` column, Gacrux refuses round 1
