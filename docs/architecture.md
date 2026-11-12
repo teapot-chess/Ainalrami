@@ -47,9 +47,8 @@ every step by default.
 FIDE's published TRF16 specification (C.04 Annex 2), the three JaVaFo
 `XX` extension lines, and - since v0.22.0 - FIDE's 2026 format (TRF26,
 approved by Council 12 May 2025), written when the caller asks for
-`dialect: :trf26`. The TRF16/JaVaFo spelling remains the default. Not
-derived from bbpPairings - adapted from the author's own OpenPairings
-project.
+`dialect: :trf26`. The TRF16/JaVaFo spelling remains the default. It was
+adapted from the author's own OpenPairings project.
 
 Two things here are load-bearing beyond ordinary parsing:
 
@@ -72,8 +71,9 @@ Two things here are load-bearing beyond ordinary parsing:
 ### `Ainalrami.Pairing`
 
 The bulk of the engine. Round one is its own path (`pair_round_one/1`);
-everything after goes into `global_cascade/2`, a stage-for-stage port of
-bbpPairings' bracket algorithm - eight matchings per bracket, not one.
+everything after goes into `global_cascade/2`, which pairs each score bracket
+by the filters of [docs/dutch-cascade.md](dutch-cascade.md) - a sequence of
+questions asked of one round matcher, not one matching per bracket.
 
 **One entry contract.** Every public entry point - `pair_next_round/2`,
 `pair_later_round/2` (the cascade even on round one), `pair_round_one/1`,
@@ -122,8 +122,7 @@ reach pairings no bipartite split can express.
 `WeightedMatching` is Edmonds' primal-dual blossom method for maximum-weight
 matching, in the integral form Galil's 1986 survey presents, and is needed
 when the problem is the whole field at once rather than one bracket. It was
-written for this project from the published method (after 0.58.0; the
-module it replaced was derived from bbpPairings' matcher). It
+written for this project from the published method. It
 grows a forest of alternating trees over lazily-moved duals with its
 events in a pairing heap, divides every edge weight by their greatest
 common divisor before solving - `Ainalrami.Pairing`'s packed criteria are
@@ -139,7 +138,8 @@ pairing, explanation and alternatives - 2.5-5x faster with byte-identical
 output: per-round player
 facts, a certified shortcut for the bye bootstrap, a root-edge table and
 batched cross-table writes in the matcher, dual shifts in place of
-re-solves in stages 4, 7 and 8, and alternatives searched in parallel.
+re-solves in the exchange and seating filters, and alternatives searched in
+parallel.
 What changed, why each change cannot move an answer, and the measurements
 are in [performance.md](performance.md).
 

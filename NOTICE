@@ -6,57 +6,25 @@ see LICENSE. The source may be read for reference; it may not be run,
 copied, modified or distributed. Versions published before 2026-11-07 keep
 the licence they were published under.
 
-The parts derived from BBP Pairings (below) stay subject to the notice and
-attribution terms of the Apache License, Version 2.0 under which BBP Pairings
-is distributed; its text is in THIRD_PARTY/bbpPairings-Apache-2.0.txt.
-
 --------------------------------------------------------------------------
-Attribution: BBP Pairings
+Provenance
 --------------------------------------------------------------------------
 
-Ainalrami contains work derived from BBP Pairings
-(https://github.com/BieremaBoyzProgramming/bbpPairings),
-Copyright 2016-2026 Jeremy Bierema, licensed under the Apache License,
-Version 2.0.
-
-No BBP Pairings source code is reproduced here. Ainalrami is written in
-Elixir and BBP Pairings in C++, so nothing was copied verbatim. What was
-taken is the ALGORITHM AND CONTROL FLOW of one component, read directly
-from the BBP Pairings source while writing the Elixir equivalent, with
-the originating file and line numbers cited inline throughout. Stating
-that plainly here rather than leaving it to be inferred:
-
-  * lib/ainalrami/pairing.ex — the FIDE Dutch-system bracket cascade,
-    ported stage for stage from src/swisssystems/dutch.cpp, including the
-    C1-C21 criteria encoding, the bootstrap bye-assignee matching, the
-    per-bracket refinement stages and the candidate-ordering (addend)
-    passes.
-
-Changes made relative to BBP Pairings, as required by section 4(b) of the
-Apache License 2.0: the code is a reimplementation in a different language and is not
-a line-for-line translation. Where BBP Pairings re-solves after the refinement
-stages 4, 7 and 8 rewrite weights, Ainalrami.Pairing first tries to absorb
-the change by moving dual variables, and re-solves only when that does
-not leave the matching optimal.
-Ainalrami.Pairing differs in its peek/window handling and in several
-places where a non-literal reading is argued in the code comments rather
-than copied. Individual deviations are documented at their call sites and
-in docs/engineering-log.md.
-
-The following parts of Ainalrami are NOT derived from BBP Pairings:
-lib/ainalrami/trf.ex implements FIDE's published TRF16 specification
-(C.04 Annex 2) and was adapted from the author's own OpenPairings
-project; lib/ainalrami/sequence.ex implements Article 4 of C.04.3 (2026)
-directly from the regulations; lib/ainalrami/weighted_matching.ex is a
-maximum-weight matching written for this project from the published
-literature (Edmonds 1965; Galil 1986), and replaced in full the earlier
-module that was derived from BBP Pairings' matcher; lib/ainalrami/cli.ex,
-generator.ex, matching.ex and log.ex are original work.
+lib/ainalrami/pairing.ex implements the FIDE Dutch system (C.04.3, 2026)
+from the regulations, as specified in docs/dutch-cascade.md;
+lib/ainalrami/weighted_matching.ex is a maximum-weight matching written for
+this project from the published literature (Edmonds 1965; Galil 1986);
+lib/ainalrami/trf.ex implements FIDE's published TRF specifications (C.04
+Annex 2) and was adapted from the author's own OpenPairings project;
+lib/ainalrami/sequence.ex implements Article 4 of C.04.3 (2026) directly
+from the regulations. Releases up to and including 0.58.0 contained a
+bracket cascade derived from BBP Pairings and carry that project's Apache
+License 2.0 attribution; those releases keep it.
 
 --------------------------------------------------------------------------
 Not included in this repository
 --------------------------------------------------------------------------
 
-Gacrux / TieBreakServer (https://github.com/OttoMilvang/TieBreakServer) is
-likewise not vendored; it is located at runtime for comparison testing
-only.
+BBP Pairings (https://github.com/BieremaBoyzProgramming/bbpPairings) and
+Gacrux / TieBreakServer (https://github.com/OttoMilvang/TieBreakServer) are
+not vendored; they are located at runtime for comparison testing only.

@@ -6,15 +6,14 @@ defmodule Ainalrami.Matching do
 
   An earlier version restricted pairing to a strict "better half (S1) vs
   worse half (S2)" bipartite split, on the theory that this is the real
-  FIDE/JaVaFo/bbpPairings structure (it's what round 1 empirically does).
+  FIDE structure (it's what round 1 empirically does).
   A real `javafo.jar` round-2 comparison run at scale (2000 random
   histories) proved that wrong: only 10.7% matched, including a
   regression on a case that matched exactly before the bipartite
-  restriction was introduced. Re-reading bbpPairings' own source
-  (`swisssystems/dutch.cpp`'s `computeEdgeWeight`) confirms why - it
-  computes a weight for ANY two compatible players, using bracket
-  membership as a WEIGHTED BONUS in that computation, not as a hard
-  exclusion of cross-bracket or non-S1/S2 pairs. The genuinely correct
+  restriction was introduced. The rules say why: C.04.3 never forbids a
+  pair for crossing a bracket or the S1/S2 split - bracket membership is
+  a quality criterion (C6-C8), a weighted preference, not a hard
+  exclusion. The genuinely correct
   shape is general (non-bipartite) matching with a strong preference for
   the natural structure, not a hard restriction to it.
 
