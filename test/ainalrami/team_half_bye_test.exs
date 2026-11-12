@@ -299,6 +299,30 @@ defmodule Ainalrami.TeamHalfByeTest do
       assert code != 0
     end
 
+    test "-g --half-bye-team-pct writes team 240 H records that -c passes; a round robin refuses it" do
+      path = tmp("g.trf")
+
+      {out, code} =
+        cli([
+          "-g",
+          "--team=swiss",
+          "--seed=5",
+          "--teams=10",
+          "--rounds=6",
+          "--half-bye-team-pct=20",
+          path
+        ])
+
+      assert code == 0, out
+      assert File.read!(path) =~ ~r/^240 H /m
+      {out, code} = cli([path, "-c"])
+      assert code == 0, out
+
+      {out, code} = cli(["-g", "--team=roundrobin", "--seed=5", "--half-bye-team-pct=20"])
+      assert code != 0
+      assert out =~ "team Swiss"
+    end
+
     # Generated events with random half-point byes, some worth something
     # other than a drawn match: `-c`'s replay reproduces every round the
     # generator paired with the engine directly.

@@ -1690,8 +1690,7 @@ defmodule Ainalrami.CLI do
             match_forfeit_pct:
               bounded_pct(option(flags, "match-forfeit-pct"), "match-forfeit-pct"),
             absent_team_pct: bounded_pct(option(flags, "absent-team-pct"), "absent-team-pct"),
-            half_bye_team_pct:
-              bounded_pct(option(flags, "half-bye-team-pct"), "half-bye-team-pct"),
+            half_bye_team_pct: half_bye_team_pct_option(flags),
             absent_player_pct:
               bounded_pct(option(flags, "absent-player-pct"), "absent-player-pct"),
             out_of_order_pct: bounded_pct(option(flags, "out-of-order-pct"), "out-of-order-pct"),
@@ -1719,6 +1718,20 @@ defmodule Ainalrami.CLI do
 
   # `--match-format` on a team event: a team round robin's (`XXM`); a team
   # Swiss has none in OpenPairings either.
+  # `--half-bye-team-pct=N`: teams taking a requested half-point bye, a
+  # Swiss only - a round robin's table has already decided who plays whom.
+  defp half_bye_team_pct_option(flags) do
+    case bounded_pct(option(flags, "half-bye-team-pct"), "half-bye-team-pct") do
+      nil ->
+        nil
+
+      pct ->
+        if team_system_option(flags) == :round_robin,
+          do: refuse("--half-bye-team-pct is for a team Swiss, not a team round robin"),
+          else: pct
+    end
+  end
+
   defp team_match_format_option(flags) do
     cond do
       "--match-format" not in flags -> nil
