@@ -44,9 +44,17 @@ defmodule Ainalrami.TeamCLITest do
   end
 
   # The file as it stood before round `k` was paired: earlier rounds, round
-  # k's announced byes and its `300` lineups.
-  defp cut(text, k) do
+  # k's announced byes and its `300` lineups. `absent_teams` sat round k
+  # out: in a round robin they were paired and forfeited all the same, the
+  # forfeit written on their players' lines over the `Z` they announced -
+  # which goes back.
+  defp cut(text, k, absent_teams \\ []) do
     parsed = Trf.parse(text)
+
+    absent =
+      parsed.teams
+      |> Enum.filter(&(&1.number in absent_teams))
+      |> Enum.flat_map(& &1.player_ranks)
 
     players =
       Enum.map(parsed.players, fn p ->
@@ -54,8 +62,16 @@ defmodule Ainalrami.TeamCLITest do
 
         games =
           case Enum.at(p.games, k - 1) do
-            %{opponent_rank: nil, result: "Z"} = g -> earlier ++ [g]
-            _ -> earlier
+            %{opponent_rank: nil, result: "Z"} = g ->
+              earlier ++ [g]
+
+            %{} = g ->
+              if p.rank in absent,
+                do: earlier ++ [%{g | opponent_rank: nil, colour: nil, result: "Z"}],
+                else: earlier
+
+            _ ->
+              earlier
           end
 
         %{p | games: games, points: 0.0}
@@ -74,6 +90,11 @@ defmodule Ainalrami.TeamCLITest do
 
     teams = Enum.map(parsed.teams, &Map.put(&1, :final_rank, nil))
     Trf.serialize(%{parsed | players: players, tournament: t, teams: teams}, dialect: :trf26)
+  end
+
+  defp padded(lineup, boards) do
+    lineup = Enum.map(lineup || [], &(&1 || 0))
+    lineup ++ List.duplicate(0, boards - length(lineup))
   end
 
   defp pairs_of(output) do
@@ -350,6 +371,51 @@ defmodule Ainalrami.TeamCLITest do
       {out, code} = cli([write(Trf.serialize(%{parsed | players: players})), "-c"])
       assert code == 1
       assert out =~ "round 2: DIFFERS in colours only"
+    end
+
+    # Seed 56 of `tools/team_cli_corpus.exs`: team 3 sits round 1 out and
+    # forfeits its Berger match against team 8. Since 0.53.0 that forfeit
+    # is written on team 3's players' lines, over the `Z` they announced, and
+    # the corpus's cut-back file lost the announcement: `-p` seated team 3's
+    # roster where the generator had nobody. 108 team round robin "board
+    # lines differ" failures, every one of them this.
+    test "a team that announced it sits the round out seats nobody (corpus seed 56)" do
+      g = TeamGenerator.run(seed: 56, system: :round_robin)
+      assert g.pairings[1].absent == [3]
+      assert {3, 8} in g.pairings[1].matches
+      assert g.pairings[1].lineups[3] == []
+
+      for k <- 1..g.rounds do
+        expected = g.pairings[k]
+        path = write(cut(g.text, k, expected.absent))
+        out = tmp("out.txt")
+        {err, 0} = cli([path, "-p", out, "--lineups", "--boards=#{g.boards}", "-q"])
+
+        [count | rest] = File.read!(out) |> String.split("\r\n", trim: true)
+        {team_lines, [_board_count | board_lines]} = Enum.split(rest, String.to_integer(count))
+
+        matches =
+          team_lines
+          |> Enum.map(fn l -> l |> String.split() |> Enum.map(&String.to_integer/1) end)
+          |> Enum.reject(fn [_, b] -> b == 0 end)
+
+        expected_boards =
+          for {[w, b], match} <- Enum.with_index(matches, 1),
+              {{x, y}, board} <-
+                Enum.with_index(
+                  Enum.zip(
+                    padded(expected.lineups[w], g.boards),
+                    padded(expected.lineups[b], g.boards)
+                  ),
+                  1
+                ) do
+            if rem(board, 2) == 1,
+              do: "#{match} #{board} #{x} #{y}",
+              else: "#{match} #{board} #{y} #{x}"
+          end
+
+        assert board_lines == expected_boards, "round #{k}: " <> err
+      end
     end
 
     test "a 092 round robin with no 192 whose games show teams is replayed too" do

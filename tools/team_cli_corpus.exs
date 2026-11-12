@@ -92,7 +92,13 @@ defmodule TeamCliCorpus do
       Enum.reduce(1..g.rounds//1, failures, fn k, acc ->
         cut = base <> "_r#{k}.trf"
         out = base <> "_r#{k}.out"
-        File.write!(cut, Trf.serialize(truncate(parsed, k), dialect: :trf26))
+        absent = g.pairings[k].absent
+
+        File.write!(
+          cut,
+          Trf.serialize(truncate(parsed, k, team_players(parsed, absent)), dialect: :trf26)
+        )
+
         code = CLI.run([cut, "-p", out, "--lineups", "--boards=#{g.boards}", "-q"])
 
         result =
@@ -116,16 +122,36 @@ defmodule TeamCliCorpus do
   # The board lines of a JaVaFo-style pairing list, the count line dropped.
   defp output_lines(text), do: text |> String.split(~r/\r?\n/, trim: true) |> tl()
 
-  # What the file held before round k was paired.
-  def truncate(parsed, k) do
+  # The players of the teams named.
+  def team_players(parsed, teams) do
+    parsed.teams
+    |> Enum.with_index(1)
+    |> Enum.filter(fn {t, i} -> (Map.get(t, :number) || i) in teams end)
+    |> Enum.flat_map(fn {t, _} -> t.player_ranks end)
+  end
+
+  # What the file held before round k was paired. `absent` are the players
+  # of the teams that announced they would sit round k out: in a round
+  # robin such a team is paired all the same and forfeits, and since 0.53.0
+  # that forfeit is written on its players' lines over the announcement -
+  # so their `Z` is put back, as the file had it before the pairing.
+  def truncate(parsed, k, absent \\ []) do
     players =
       Enum.map(parsed.players, fn p ->
         earlier = Enum.take(p.games, k - 1)
 
         games =
           case Enum.at(p.games, k - 1) do
-            %{opponent_rank: nil, result: r} = g when r in @pre_recorded -> earlier ++ [g]
-            _ -> earlier
+            %{opponent_rank: nil, result: r} = g when r in @pre_recorded ->
+              earlier ++ [g]
+
+            %{} = g ->
+              if p.rank in absent,
+                do: earlier ++ [%{g | opponent_rank: nil, colour: nil, result: "Z"}],
+                else: earlier
+
+            _ ->
+              earlier
           end
 
         %{p | games: games, points: games |> Enum.map(&points/1) |> Enum.sum()}
