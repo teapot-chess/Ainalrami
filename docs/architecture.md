@@ -19,7 +19,7 @@ for how the engine was verified see [validation.md](validation.md).
       │                         └ otherwise: global_cascade/2
       │
       ├──► Ainalrami.Matching ────────── bitmask DP, small brackets
-      └──► Ainalrami.WeightedMatching ── Galil/Micali/Gabow, whole field
+      └──► Ainalrami.WeightedMatching ── primal-dual blossom, whole field
       │
       ▼
   Ainalrami.Trf ──────────── serialize
@@ -119,25 +119,20 @@ allowing some players to go unmatched as floaters. It is not restricted to
 a bipartite S1/S2 split - which matters, because Article 4.3's exchanges
 reach pairings no bipartite split can express.
 
-`WeightedMatching` is the Galil/Micali/Gabow (1986) primal-dual algorithm,
-confirmed from bbpPairings' own source as what it uses, and needed when
-the problem is the whole field at once rather than one bracket.
-
-It originally **omitted** bbpPairings' incremental caches
-(`minOuterEdges`, per-blossom `minOuterEdgeResistance`) and rescanned
-instead, trading the O(n³) bound for a smaller and more directly
-verifiable translation. That was fine while brackets were small and became
-the engine's binding constraint once a 209-player field took ninety
-seconds a round.
-
-It now maintains equivalent caches - per vertex rather than per blossom -
-and divides every edge weight by the greatest common divisor of all of
-them before solving, which matters because `Ainalrami.Pairing`'s packed
-criteria produce weights of about a hundred digits and made the innermost
-operation in the algorithm arbitrary-precision arithmetic. Both are stated
-in [NOTICE](../NOTICE) as §4(b) changes, and the measurements, the
-reasoning that makes the caches sound, and what the work did *not* achieve
-are in [validation.md](validation.md#performance).
+`WeightedMatching` is Edmonds' primal-dual blossom method for maximum-weight
+matching, in the integral form Galil's 1986 survey presents, and is needed
+when the problem is the whole field at once rather than one bracket. It was
+written for this project from the published method (after 0.58.0; the
+module it replaced was derived from bbpPairings' matcher). It
+grows a forest of alternating trees over lazily-moved duals with its
+events in a pairing heap, divides every edge weight by their greatest
+common divisor before solving - `Ainalrami.Pairing`'s packed criteria are
+hundred-digit integers - and keeps its duals and blossoms between calls,
+so that a caller who edits a few rows re-solves from the previous optimum
+rather than from scratch. The moduledoc states the invariants and the
+order that decides between equal-weight optima;
+[performance.md](performance.md#the-matcher-rewritten-from-the-literature-2026-11-12)
+has the measurements.
 
 The 2026-09-28 performance pass made a large field's whole round -
 pairing, explanation and alternatives - 2.5-5x faster with byte-identical

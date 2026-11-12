@@ -5,7 +5,8 @@ First ten thousand players (one round of a big open, timed at 1,000 to
 (`Pairing.pair_variants/3`, the batch behind OpenPairings' next-round
 preview). Then the timing study, which measures
 all three engines on 3,000 random positions and is the figure to quote.
-Then seven passes, newest first: the
+Then eight passes, newest first: the matcher rewritten from the
+literature, the
 whole-field build, the weighted matcher itself (the blossom fallback), the slow tail of the last
 round, the slow spots the direct bracket left, the
 direct bracket on odd fields, the direct bracket itself, which took the
@@ -634,6 +635,125 @@ left](#what-is-left)). Positions outside the tail are unchanged.
   447,152 rounds identical in the default configuration and 44,325 in
   check mode with every new answer held to the path it replaces - see the
   slow tail's [How it was checked](#how-it-was-checked).
+
+## The matcher, rewritten from the literature (2026-11-12)
+
+`WeightedMatching` was replaced in full by a primal-dual blossom matcher
+written from Edmonds (1965) and Galil (1986), with a structure of its own
+(the module's docs describe it). The pass had two requirements: the same
+pairings, and no field size slower than before. Every figure below is
+v0.58.0 against the new module, measured on one 16-thread Windows desktop,
+one build after the other.
+
+### Same answers
+
+* `bench/scale.exs` (`SCALE_REF=v0.58.0`, 100, 400, 600 and 10,000
+  players, seven rounds): 28 of 28 rounds identical. Its generator
+  (`SCALE_GEN=1`, 1,000 tournaments each at 40, 100, 150 and 300
+  players, eleven rounds): 44,000 rounds, digest files byte for byte the
+  same.
+* `tools/perf_diff.exs`, the full standing corpus on the VM, old against
+  new. On default settings every round was identical: small 370,781,
+  large 5,497, early 1,980, and `f_nofast` (the reference path on small
+  fields) 26,120. The two other `flags` axes switch on non-default
+  settings and differ; see "Ties" below.
+* `tools/matching_lockstep.exs` against v0.58.0: every solve at the
+  reference's weight, and every state the new module claims is optimal
+  checked against an LP certificate built from `proof_export/1`, not from
+  the module's own code. That covered 20,000 random sessions, plus 3,000
+  on graphs of up to 400 vertices. `tools/matching_incremental.exs`:
+  every incremental re-solve optimal and valid.
+
+### Ties
+
+When a graph has several maximum-weight matchings, the two modules often
+return different ones. In the lockstep about 84% of solves return the same
+pairs. Inside the engine, ties are everywhere: on the `f_completion` axis
+alone, about 200,000 solves returned a different matching of equal weight
+from a cold solve of the same graph by the 0.58.0 module, at nearly every
+call site. On default settings the engine's answers do not depend on that
+choice, and the default corpus above came back identical. Two settings
+that are not the default let it through:
+
+| axis | setting | tournaments that differ | rounds |
+|---|---|---:|---:|
+| `f_strand` | `AINALRAMI_FORCE_STRAND=1`: fault injection that strands a tenth of rounds so that `repair_completion/3` gets exercised | 279 of 3,000 | 1,157 differ, 8 present on one side only |
+| `f_completion` | `AINALRAMI_COMPLETION=eligibility`: an experimental reading of the completion rung | 22 of 2,000 | 44 differ |
+
+`repair_completion/3`'s five-band weights tie, and its own comment says
+the matcher breaks the tie. Both axes were then rerun with every solve
+checked twice: once against the new state's LP certificate, and once
+against the weight of the 0.58.0 module's matching on the same graph.
+Every solve carried a valid certificate. In 524,559 of them the 0.58.0
+module picked a different matching, and every time it weighed exactly the
+same. These rounds have different optima, not wrong ones. On
+these two settings, which optimum the engine reports has always been the
+matcher's choice.
+
+### Speed
+
+The engine's own path, which is what OpenPairings runs (`bench/scale.exs`,
+all seven rounds together):
+
+| field | v0.58.0 | new |
+|---:|---:|---:|
+| 100 | 26 ms | 24 ms |
+| 400 | 63 ms | 64 ms |
+| 600 | 71 ms | 71 ms |
+| 10,000 | 1.66 s | 1.66 s |
+
+Here the matcher sees mostly small, warm graphs, and the round's time goes
+elsewhere. The two `perf_diff` slices with the largest fields, three
+tournaments each and every round on the matcher: `l_300_600` 13.8-14.0 s
+before and 13.2 s after, `e_350_600_r2` 14.0 s before and 12.5 s after.
+
+The reference path is where the matcher does all the work: the certified
+shortcuts switched off (`AINALRAMI_CERT=off AINALRAMI_DIRECT=off
+AINALRAMI_NOFAST=1`), the path a pairing proof records. Below is
+`tools/proof_bench.exs`, pairing round 6 once:
+
+| players | reference path, v0.58.0 | new | proof on, v0.58.0 | new | proof peak memory, v0.58.0 | new |
+|---:|---:|---:|---:|---:|---:|---:|
+| 100 | 111 ms | 91 ms | 186 ms | 158 ms | 60 MB | 63 MB |
+| 200 | 575-590 ms | 508 ms | 900-917 ms | 835 ms | 89-95 MB | 81 MB |
+| 400 | 3,679-3,756 ms | 3,335 ms | 5,584-5,712 ms | 5,317 ms | 250-271 MB | 323 MB |
+| 600 | 11,113 ms | 8,041 ms | 16,497 ms | 13,701 ms | 514 MB | 710 MB |
+| 1,000 | 51,714 ms | 34,414 ms | 73,596 ms | 56,559 ms | 1,468 MB | 1,441 MB |
+
+The proof off is unchanged at every size (4 to 37 ms). The peak memory
+of a proof run went up at 400 and 600 players. It is the peak over the
+whole run, so it measures a large solve's queue of events, many of them
+stale, as much as anything kept. The states the module keeps between
+solves are no larger than before.
+
+### What it took
+
+The first complete version grew one tree at a time and was 2.5 times
+slower on `l_300_600`. Three changes brought it back:
+
+* **A pairing heap for the queue**, not a balanced tree: a forest offers
+  far more events than it ever takes, and in a pairing heap an insertion
+  is a single comparison.
+* **Every root at once.** All the roots whose dual has the same parity
+  grow together, as one forest, and when an augmentation ends two trees
+  the rest of the forest carries on. That is at most two forests per
+  solve, instead of one search per root.
+* **A summary per blossom.** The reference path was still 1.8 times
+  slower at 400 players. The cause was a handful of solves (one took
+  4.7 s, with 156 roots) where a blossom of about 160 vertices was marked
+  outer again after every dissolve, each time walking every row in it:
+  two million row visits, and 760,000 stale events to throw away. A
+  blossom's members' duals move together while it stands, so the cheapest
+  edge from the blossom to each vertex outside it is computed once and
+  kept until the blossom is opened or an edge at it changes. That solve
+  now takes 0.5 s.
+* **A freed vertex walks the shorter list.** When a tree is dissolved,
+  each vertex it releases looks for its cheapest edge back into the
+  forest. It now walks either its own row or the forest's labelled
+  vertices, whichever is shorter. Late in a forest few trees remain, and
+  that cut the edge visits in the 400-player replay from 36.5 million to
+  8.5 million, taking the replay of its 222 field solves from 3.4 s to
+  2.8 s.
 
 ## The whole-field build (2026-10-27)
 

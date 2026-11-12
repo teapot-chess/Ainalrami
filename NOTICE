@@ -21,8 +21,8 @@ Version 2.0.
 
 No BBP Pairings source code is reproduced here. Ainalrami is written in
 Elixir and BBP Pairings in C++, so nothing was copied verbatim. What was
-taken is the ALGORITHM AND CONTROL FLOW of two components, read directly
-from the BBP Pairings source while writing the Elixir equivalents, with
+taken is the ALGORITHM AND CONTROL FLOW of one component, read directly
+from the BBP Pairings source while writing the Elixir equivalent, with
 the originating file and line numbers cited inline throughout. Stating
 that plainly here rather than leaving it to be inferred:
 
@@ -32,28 +32,9 @@ that plainly here rather than leaving it to be inferred:
     per-bracket refinement stages and the candidate-ordering (addend)
     passes.
 
-  * lib/ainalrami/weighted_matching.ex — the Galil/Micali/Gabow (1986)
-    primal-dual maximum-weight matching algorithm, with the control flow
-    read from src/matching/detail/graph.cpp, rootblossom.cpp,
-    parentblossom.cpp and src/matching/computer.cpp. The underlying
-    algorithm is published academic work; what is derived from BBP
-    Pairings is the specific implementation structure.
-
 Changes made relative to BBP Pairings, as required by section 4(b) of the
 Apache License 2.0: the code is a reimplementation in a different language and is not
-a line-for-line translation. Ainalrami.WeightedMatching originally omitted
-BBP Pairings' incremental caches (minOuterEdges, per-blossom
-minOuterEdgeResistance) and rescanned instead, trading the O(n^3) bound
-for a smaller and more directly verifiable translation; it now maintains
-equivalent caches, arrived at independently and structured per vertex
-rather than per blossom, and additionally divides all edge weights by
-their greatest common divisor before solving — a step BBP Pairings has no
-need of, since its weights are machine integers rather than the packed
-hundred-digit criteria values Ainalrami.Pairing produces. It also keeps,
-across stages, each free vertex's least edge to the exposed roots (a
-table BBP Pairings does not have) and applies a settling blossom's
-cross-table offers in one batch; neither changes a single returned value
-(docs/performance.md). Where BBP Pairings re-solves after the refinement
+a line-for-line translation. Where BBP Pairings re-solves after the refinement
 stages 4, 7 and 8 rewrite weights, Ainalrami.Pairing first tries to absorb
 the change by moving dual variables, and re-solves only when that does
 not leave the matching optimal.
@@ -66,8 +47,11 @@ The following parts of Ainalrami are NOT derived from BBP Pairings:
 lib/ainalrami/trf.ex implements FIDE's published TRF16 specification
 (C.04 Annex 2) and was adapted from the author's own OpenPairings
 project; lib/ainalrami/sequence.ex implements Article 4 of C.04.3 (2026)
-directly from the regulations; lib/ainalrami/cli.ex, generator.ex,
-matching.ex and log.ex are original work.
+directly from the regulations; lib/ainalrami/weighted_matching.ex is a
+maximum-weight matching written for this project from the published
+literature (Edmonds 1965; Galil 1986), and replaced in full the earlier
+module that was derived from BBP Pairings' matcher; lib/ainalrami/cli.ex,
+generator.ex, matching.ex and log.ex are original work.
 
 --------------------------------------------------------------------------
 Not included in this repository

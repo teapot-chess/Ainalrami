@@ -1,44 +1,49 @@
-# The matcher, held to its previous release step by step.
+# The matcher, held to an earlier release call by call.
 #
-#   mix run tools/matching_lockstep.exs            # 2,000 random sessions
-#   LOCKSTEP_SESSIONS=20000 LOCKSTEP_REF=v0.33.0 mix run tools/matching_lockstep.exs
-#   LOCKSTEP_LARGE=1 ...                           # graphs of up to 400 vertices
+#   MIX_ENV=test mix run tools/matching_lockstep.exs     # 2,000 random sessions
+#   LOCKSTEP_SESSIONS=20000 LOCKSTEP_REF=v0.58.0 MIX_ENV=test mix run tools/matching_lockstep.exs
+#   LOCKSTEP_LARGE=1 ...                                  # graphs of up to 400 vertices
 #
-# `tools/matching_baseline.exs` and `tools/matching_incremental.exs` check
-# that `Ainalrami.WeightedMatching` finds A maximum-weight matching. That
-# is the right test for a change that is allowed to pick a different one
-# of several optima. It is the wrong test for a PERFORMANCE change, which
-# is not allowed to change anything at all: the pairing engine runs this
-# matcher incrementally, hundreds of solves per round, and which optimum a
-# solve returns - and the duals and blossoms it leaves behind for the next
-# one - decides ties several stages later.
+# This compiles the matcher as it stood at `LOCKSTEP_REF` (default
+# `v0.58.0`, the last release of the previous implementation) under another
+# module name and drives both through the same random session: `new/3`,
+# `solve/1`, `set_weight/4`, `finalize_pair/3`, `shift_and_set/3`,
+# `scale/2` and the reads the engine makes. The two are different
+# implementations of one specification, so their internal states are not
+# compared; each call is held to what the specification says:
 #
-# So this compiles the matcher as it stood at `LOCKSTEP_REF` (default
-# `v0.33.0`) under another module name, drives both through the same
-# random session - `new/3`, `solve/1`, `set_weight/4`, `finalize_pair/3`,
-# `shift_and_set/3`, `neighbours/2`, `edge_weight/3`, `mate_of/2` - and
-# requires, after EVERY call, the same return value and the same
-# persistent state: duals, matches, blossom structure, connectors,
-# weights. The caches a solve rebuilds from scratch on entry are not
-# compared (a representation change there is allowed); everything a later
-# call can observe is.
+#   * every `solve/1` and `solve/2` returns a matching of exactly the
+#     reference's total weight on the same graph;
+#   * the new state after every call that claims optimality (a solve, a
+#     finalised pair, a scaling; an accepted shift is certified by the
+#     solve after it, since it may leave an exposed dual above 0) carries a valid LP
+#     certificate: every reduced cost non-negative and zero on matched
+#     edges, every blossom full, no dual negative, every exposed vertex at
+#     dual 0 - checked here from `proof_export/1`, not by the module's own
+#     code;
+#   * `dual_context/1` is valid on it, and `possible_partners/3` lists the
+#     held partner, and allows exposure, wherever the matching does;
+#   * a scaled solved state solves to the same matching;
+#   * `neighbours/2`, `edge_weight/3` and the gcd agree with the reference.
+#
+# The graphs stay identical on both sides: every edit is applied to both,
+# and a finalised pair or an accepted shift (chosen from the new matcher's
+# state) is replayed on the reference through `set_weight/4` when the
+# reference refuses it, since its matching may differ on ties.
+#
+# The run also counts how often the two matchings are the same pairs. On
+# graphs with several optima they need not be; the engine's own answers are
+# held to the reference by the corpus runs (`tools/perf_diff.exs`,
+# `bench/scale.exs`), not by this.
 #
 # Sessions are shaped like the engine's: packed bignum weights with a
-# nearness term (the round matcher), the same at the engine's own widths -
-# six criteria bands packed into 150-700-bit weights with few distinct
-# values (`:wide`) - small plain weights with heavy ties (the oracle, the
-# team matcher), complete graphs with per-vertex duals (the bye bootstrap),
-# and batches of edits that prepare one vertex, a row, or everything at
-# once (stage 4 on the field graph). Each session also reads what the
-# engine reads off a solved state - `dual_context/1` and
-# `possible_partners/3`, `certificate_hint/1`, `vertex_duals/1` - and
-# sometimes scales it (`scale/2`), and one in four starts with a one-shot
-# `solve/2` of its graph, compared as well.
-#
-# `LOCKSTEP_LARGE=1` draws the vertex count up to 400 (sparse above 100),
-# for the graphs the round matcher and the local brackets solve.
+# nearness term (the round matcher), six criteria bands at the engine's own
+# widths with few distinct values (`:wide`, heavy ties), small plain
+# weights, a few weights only (`:ties`), complete graphs with per-vertex
+# duals (the bye bootstrap); and batches of edits that release one vertex, a
+# row, or everything at once.
 
-ref = System.get_env("LOCKSTEP_REF", "v0.33.0")
+ref = System.get_env("LOCKSTEP_REF", "v0.58.0")
 sessions = String.to_integer(System.get_env("LOCKSTEP_SESSIONS", "2000"))
 seed_from = String.to_integer(System.get_env("LOCKSTEP_SEED_FROM", "1"))
 
@@ -55,38 +60,76 @@ defmodule Lockstep do
   alias Ainalrami.WeightedMatching, as: New
   alias Ainalrami.WeightedMatchingReference, as: Ref
 
-  # Everything a later call can observe. The label map, the forest's edges
-  # and the delta-scan caches are rebuilt by every `solve/1` before they are
-  # read, so they are left out.
-  @observable [
-    :n,
-    :max_w,
-    :gcd,
-    :weight,
-    :dual,
-    :mate,
-    :in_blossom,
-    :children,
-    :vertices_of,
-    :parent_of,
-    :base,
-    :blossom_match,
-    :connectors,
-    :next_blossom_id
-  ]
+  def check!(true, _where), do: :ok
+  def check!(false, where), do: raise("lockstep: #{inspect(where)}")
 
-  def view(state), do: Map.take(state, @observable)
+  defp tally(key), do: Process.put(key, Process.get(key, 0) + 1)
 
-  def check!(where, a, b) do
-    if a != b do
-      raise "lockstep: #{inspect(where)} differs"
+  # Total weight of a matching on a state's current graph (caller's scale).
+  defp total(mod, state, matching) do
+    Enum.reduce(matching, 0, fn {u, v}, acc ->
+      if u < v, do: acc + mod.edge_weight(state, u, v), else: acc
+    end)
+  end
+
+  defp graph_of(mod, state) do
+    for u <- 0..(state.n - 1)//1, {v, w} <- mod.neighbours(state, u), u < v, into: %{} do
+      {{u, v}, w}
     end
   end
 
-  def same_state!(where, {:ok, a}, {:ok, b}), do: same_state!(where, a, b)
-  def same_state!(_where, :error, :error), do: :ok
-  def same_state!(where, %{} = a, %{} = b), do: check!(where, view(a), view(b))
-  def same_state!(where, a, b), do: check!(where, a, b)
+  # The LP certificate, from the exported solution alone.
+  def certified!(state, where) do
+    ex = New.proof_export(state)
+    mate = ex.mate
+    check!(Enum.all?(mate, fn {u, v} -> Map.get(mate, v) == u end), {where, :mate_symmetric})
+
+    zs = Enum.map(ex.blossoms, fn {vs, z} -> {MapSet.new(vs), z} end)
+    check!(Enum.all?(zs, fn {_, z} -> z >= 0 end), {where, :negative_z})
+    check!(Enum.all?(ex.dual, fn {_, y} -> y >= 0 end), {where, :negative_y})
+
+    for {u, row} <- ex.weight, {v, w2} <- row, u < v do
+      common =
+        Enum.reduce(zs, 0, fn {s, z}, acc ->
+          if MapSet.member?(s, u) and MapSet.member?(s, v), do: acc + z, else: acc
+        end)
+
+      rc = Map.fetch!(ex.dual, u) + Map.fetch!(ex.dual, v) + common - w2
+      check!(rc >= 0, {where, :infeasible, u, v})
+      if Map.get(mate, u) == v, do: check!(rc == 0, {where, :matched_not_tight, u, v})
+    end
+
+    for {s, _} <- zs do
+      inside = Enum.count(s, fn v -> MapSet.member?(s, Map.get(mate, v)) end)
+      check!(inside == MapSet.size(s) - 1, {where, :blossom_not_full})
+    end
+
+    for v <- 0..(ex.n - 1)//1, not is_map_key(mate, v) do
+      check!(Map.fetch!(ex.dual, v) == 0, {where, :exposed_dual, v})
+    end
+
+    ctx = New.dual_context(state)
+    check!(ctx != :invalid, {where, :dual_context})
+
+    for v <- 0..(ex.n - 1)//1, map_size(Map.get(ex.weight, v, %{})) > 0 do
+      {tight, exposable?} = New.possible_partners(state, ctx, v)
+
+      case Map.get(mate, v) do
+        nil -> check!(exposable?, {where, :not_exposable, v})
+        u -> check!(u in tight, {where, :partner_not_tight, v})
+      end
+    end
+
+    :ok
+  end
+
+  def solved!(where, a, ma, b, mb) do
+    check!(ma == a.mate, {where, :returned_mate})
+    check!(total(New, a, ma) == total(Ref, b, mb), {where, :weight})
+    certified!(a, where)
+    tally(:solves)
+    if ma == mb, do: tally(:same_matching)
+  end
 
   def run(seed) do
     :rand.seed(:exsss, {seed, seed * 7919, seed * 104_729})
@@ -101,60 +144,71 @@ defmodule Lockstep do
     {edges, opts, draw} = graph(shape, n)
 
     if shape != :complete and :rand.uniform(4) == 1 do
-      plain = Enum.map(edges, fn {i, j, w} -> {i, j, w} end)
-      check!({seed, :solve2}, New.solve(n, plain), Ref.solve(n, plain))
+      ma = New.solve(n, edges)
+      mb = Ref.solve(n, edges)
+      w = Map.new(edges, fn {i, j, w} -> {{min(i, j), max(i, j)}, w} end)
+
+      wt = fn m ->
+        Enum.reduce(m, 0, fn {u, v}, acc -> if u < v, do: acc + w[{u, v}], else: acc end)
+      end
+
+      check!(wt.(ma) == wt.(mb), {seed, :solve2_weight})
+      tally(:solves)
+      if ma == mb, do: tally(:same_matching)
     end
 
     a = New.new(n, edges, opts)
     b = Ref.new(n, edges, opts)
-    same_state!({seed, :new}, a, b)
+    check!(a.gcd == b.gcd and graph_of(New, a) == graph_of(Ref, b), {seed, :new})
 
     steps = if n > 120, do: Enum.random(4..16), else: Enum.random(4..40)
 
-    Process.put(:lockstep_calls, 0)
-
     Enum.reduce(1..steps, {a, b}, fn step, {a, b} ->
-      Process.put(:lockstep_calls, Process.get(:lockstep_calls) + 1)
+      tally(:calls)
       where = {seed, shape, n, step}
 
       case op(n) do
         :solve ->
           {a, ma} = New.solve(a)
           {b, mb} = Ref.solve(b)
-          check!({where, :matching}, ma, mb)
-          same_state!({where, :solve}, a, b)
+          solved!(where, a, ma, b, mb)
           {a, b}
 
         {:edit, batch} ->
           changes = changes(batch, n, draw, a.gcd)
 
-          {a, b} =
-            Enum.reduce(changes, {a, b}, fn {u, v, w}, {a, b} ->
-              {New.set_weight(a, u, v, w), Ref.set_weight(b, u, v, w)}
-            end)
-
-          same_state!({where, :set_weight}, a, b)
-          {a, b}
+          Enum.reduce(changes, {a, b}, fn {u, v, w}, {a, b} ->
+            {New.set_weight(a, u, v, w), Ref.set_weight(b, u, v, w)}
+          end)
 
         :finalize ->
-          case Enum.find(Map.to_list(a.mate), fn {u, v} -> u < v end) do
+          # Solved first, so the pair is one an optimum holds.
+          {a, ma} = New.solve(a)
+          {b, mb} = Ref.solve(b)
+          solved!({where, :before_finalize}, a, ma, b, mb)
+
+          case Enum.find(Enum.sort(ma), fn {u, v} -> u < v end) do
             nil ->
               {a, b}
 
             {u, v} ->
-              ra = New.finalize_pair(a, u, v)
-              rb = Ref.finalize_pair(b, u, v)
-              same_state!({where, :finalize}, ra, rb)
+              case New.finalize_pair(a, u, v) do
+                :error ->
+                  {a, b}
 
-              case {ra, rb} do
-                {{:ok, a}, {:ok, b}} -> {a, b}
-                _ -> {a, b}
+                {:ok, a} ->
+                  tally(:finalize_ok)
+                  certified!(a, {where, :finalize})
+                  {a, ref_finalize(b, u, v)}
               end
           end
 
         :shift ->
+          {a, ma} = New.solve(a)
+          {b, mb} = Ref.solve(b)
+          solved!({where, :before_shift}, a, ma, b, mb)
           vs = Enum.take_random(0..(n - 1)//1, min(n, Enum.random(1..4)))
-          shifts = Map.new(vs, &{&1, 2 * Enum.random(0..3)})
+          shifts = Map.new(vs, &{&1, 2 * Enum.random(-1..3)})
 
           edges =
             for u <- vs,
@@ -162,13 +216,14 @@ defmodule Lockstep do
                 u != v,
                 do: {min(u, v), max(u, v), draw.() * a.gcd}
 
-          ra = New.shift_and_set(a, shifts, edges)
-          rb = Ref.shift_and_set(b, shifts, edges)
-          same_state!({where, :shift}, ra, rb)
+          case New.shift_and_set(a, shifts, edges) do
+            :error ->
+              tally(:shift_error)
+              {a, b}
 
-          case {ra, rb} do
-            {{:ok, a}, {:ok, b}} -> {a, b}
-            _ -> {a, b}
+            {:ok, a} ->
+              tally(:shift_ok)
+              {a, ref_shift(b, shifts, edges)}
           end
 
         :read ->
@@ -176,40 +231,55 @@ defmodule Lockstep do
           u = Enum.random(0..(n - 1)//1)
 
           check!(
-            {where, :neighbours},
-            Enum.sort(New.neighbours(a, v)),
-            Enum.sort(Ref.neighbours(b, v))
+            Enum.sort(New.neighbours(a, v)) == Enum.sort(Ref.neighbours(b, v)),
+            {where, :neighbours}
           )
 
-          check!({where, :edge_weight}, New.edge_weight(a, v, u), Ref.edge_weight(b, v, u))
-          check!({where, :mate_of}, New.mate_of(a, v), Ref.mate_of(b, v))
-          check!({where, :vertex_duals}, New.vertex_duals(a), Ref.vertex_duals(b))
-          check!({where, :certificate_hint}, New.certificate_hint(a), Ref.certificate_hint(b))
-
-          ca = New.dual_context(a)
-          cb = Ref.dual_context(b)
-          check!({where, :dual_context}, ca, cb)
-
-          if ca != :invalid do
-            check!(
-              {where, :possible_partners},
-              New.possible_partners(a, ca, v),
-              Ref.possible_partners(b, cb, v)
-            )
-          end
-
+          check!(New.edge_weight(a, v, u) == Ref.edge_weight(b, v, u), {where, :edge_weight})
+          _ = New.vertex_duals(a)
+          _ = New.certificate_hint(a)
           {a, b}
 
         :scale ->
           k = Enum.random(2..5)
+          {a, ma} = New.solve(a)
+          {b, mb} = Ref.solve(b)
+          solved!({where, :before_scale}, a, ma, b, mb)
           a = New.scale(a, k)
           b = Ref.scale(b, k)
-          same_state!({where, :scale}, a, b)
+          certified!(a, {where, :scale})
+          {a, ma2} = New.solve(a)
+          check!(ma2 == ma, {where, :scale_kept_matching})
           {a, b}
       end
     end)
 
-    {:ok, n, shape, Process.get(:lockstep_calls)}
+    {:ok, n, shape}
+  end
+
+  # The reference's graph brought to what `finalize_pair/3` left the new
+  # one: only `{u, v}` at `u` and `v`.
+  defp ref_finalize(b, u, v) do
+    case Ref.finalize_pair(b, u, v) do
+      {:ok, b} ->
+        b
+
+      :error ->
+        Enum.reduce([{u, v}, {v, u}], b, fn {x, keep}, b ->
+          b
+          |> Ref.neighbours(x)
+          |> Enum.reduce(b, fn {y, _}, b ->
+            if y == keep, do: b, else: Ref.set_weight(b, x, y, 0)
+          end)
+        end)
+    end
+  end
+
+  defp ref_shift(b, shifts, edges) do
+    case Ref.shift_and_set(b, shifts, edges) do
+      {:ok, b} -> b
+      :error -> Enum.reduce(edges, b, fn {u, v, w}, b -> Ref.set_weight(b, u, v, w) end)
+    end
   end
 
   defp op(n) do
@@ -352,15 +422,17 @@ defmodule Lockstep do
 end
 
 started = System.monotonic_time(:millisecond)
+keys = [:calls, :solves, :same_matching, :finalize_ok, :shift_ok, :shift_error]
 
 results =
   seed_from..(seed_from + sessions - 1)
   |> Task.async_stream(
     fn seed ->
       try do
-        Lockstep.run(seed)
+        r = Lockstep.run(seed)
+        {r, Map.new(keys, &{&1, Process.get(&1, 0)})}
       rescue
-        e -> {:failed, seed, Exception.message(e)}
+        e -> {{:failed, seed, Exception.message(e)}, %{}}
       end
     end,
     max_concurrency: System.schedulers_online(),
@@ -368,12 +440,15 @@ results =
   )
   |> Enum.map(fn {:ok, r} -> r end)
 
-failures = Enum.reject(results, &match?({:ok, _, _, _}, &1))
-passed = for {:ok, n, shape, calls} <- results, do: {n, shape, calls}
+failures = for {{:failed, _, _} = f, _} <- results, do: f
+passed = for {{:ok, n, shape}, _} <- results, do: {n, shape}
+
+counts =
+  Enum.reduce(results, %{}, fn {_, c}, acc -> Map.merge(acc, c, fn _, x, y -> x + y end) end)
 
 by_size =
   passed
-  |> Enum.group_by(fn {n, _, _} ->
+  |> Enum.group_by(fn {n, _} ->
     cond do
       n <= 16 -> "2-16"
       n <= 64 -> "17-64"
@@ -390,14 +465,14 @@ IO.puts(
   "sessions by shape: #{inspect(passed |> Enum.frequencies_by(&elem(&1, 1)) |> Enum.sort())}"
 )
 
-IO.puts("calls compared: #{passed |> Enum.map(&elem(&1, 2)) |> Enum.sum()}")
+IO.puts("counts: #{inspect(counts)}")
 
 secs = (System.monotonic_time(:millisecond) - started) / 1000
 IO.puts("#{sessions} sessions against #{ref} in #{Float.round(secs, 1)} s")
 
 case failures do
   [] ->
-    IO.puts("LOCKSTEP: every call returned the same value and left the same state")
+    IO.puts("LOCKSTEP: every solve at the reference's weight, every state certified optimal")
 
   _ ->
     IO.puts("#{length(failures)} FAILURES")

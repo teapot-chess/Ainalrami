@@ -49,8 +49,8 @@ defmodule Ainalrami.TeamPairing.Bracket do
      identifier packed into one integer cost per pair, one matching for the
      least criteria and the first top set, one confined to that top set for
      the first bottom sequence. The matcher is the engine's own
-     `Ainalrami.WeightedMatching` (a port of bbpPairings' Galil/Micali/Gabow
-     code), not the proof's test-only reference.
+     `Ainalrami.WeightedMatching` (Edmonds' blossom method, Galil 1986),
+     not the proof's test-only reference.
 
   Until 2026-09-25 step 2 was the walk continued under a candidate budget
   (`:max_candidates`, default 200,000) and a step budget (`:max_steps`,

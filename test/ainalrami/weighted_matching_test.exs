@@ -117,7 +117,8 @@ defmodule Ainalrami.WeightedMatchingTest do
       state = WeightedMatching.new(0, [])
 
       assert state.in_blossom == %{}
-      assert state.base == %{}
+      assert state.bases == %{}
+      assert state.members == %{}
     end
   end
 
@@ -210,27 +211,28 @@ defmodule Ainalrami.WeightedMatchingTest do
     Enum.reduce(pairs, 0, fn {a, b}, acc -> acc + pair_weight_fun.(a, b) end)
   end
 
-  # Ld1. Both tree walks recurse by `Map.fetch!` on `label_edge` /
-  # `blossom_match`, structures no reachable input is known to make
-  # cyclic - but a cycle would spin for ever with no output, which is
-  # exactly how the blossom-resolution bug in this file's history
-  # presented. The budget turns that into a raise.
-  describe "invariant failures raise" do
+  describe "duals of either parity" do
     # Two exposed vertices whose duals sum to an odd amount over their
-    # edge: the outer-outer resistance is 3, so the step is `div(3, 2) = 1`,
-    # which leaves it at 1 and every other candidate short of zero too.
-    # `solve/1`'s prologue evens such duals up first; the stages alone must
-    # refuse the state rather than end the solve with both left exposed.
-    test "a dual step that makes nothing tight raises instead of stopping the solve" do
+    # edge. One tree moves at a time, so the parity of a tree's outer duals
+    # is the root's own and no step is ever half a unit; the exposed ends
+    # are first lowered to the least feasible dual, which pairs them here.
+    test "an odd dual sum over an exposed edge is still matched" do
       state = WeightedMatching.new(2, [{0, 1, 5}], duals: %{0 => 7, 1 => 6})
-
-      assert_raise RuntimeError, ~r/made nothing tight/, fn ->
-        WeightedMatching.__walk_for_test__(:stages, state, nil)
-      end
-
-      # The same state through the whole of `solve/1` is evened up and
-      # matched.
       assert {_, %{0 => 1, 1 => 0}} = WeightedMatching.solve(state)
+    end
+
+    test "a released vertex inside a blossom leaves only it and the blossom's mate exposed" do
+      # A triangle 0-1-2 heavier than anything outside, 3 hanging off 0.
+      edges = [{0, 1, 10}, {1, 2, 10}, {0, 2, 10}, {0, 3, 9}, {3, 4, 1}]
+      {state, _} = 5 |> WeightedMatching.new(edges, max_weight: 20) |> WeightedMatching.solve()
+      edited = WeightedMatching.set_weight(state, 1, 2, 1)
+      exposed = for v <- 0..4, WeightedMatching.mate_of(edited, v) == nil, do: v
+      assert length(exposed) <= 3
+      {_, matching} = WeightedMatching.solve(edited)
+      fresh = WeightedMatching.solve(5, [{0, 1, 10}, {1, 2, 1}, {0, 2, 10}, {0, 3, 9}, {3, 4, 1}])
+
+      assert total_weight(matching, [{0, 1, 10}, {1, 2, 1}, {0, 2, 10}, {0, 3, 9}, {3, 4, 1}]) ==
+               total_weight(fresh, [{0, 1, 10}, {1, 2, 1}, {0, 2, 10}, {0, 3, 9}, {3, 4, 1}])
     end
   end
 
@@ -353,40 +355,8 @@ defmodule Ainalrami.WeightedMatchingTest do
     end
   end
 
-  describe "tree-walk step budgets" do
-    test "blossom_ids_to_root/2 raises rather than looping on a cyclic label_edge" do
-      # Two INNER blossoms whose labelling edges point at each other.
-      state = %{
-        n: 4,
-        label: %{0 => :inner, 1 => :inner},
-        label_edge: %{0 => {1, 1}, 1 => {0, 0}},
-        in_blossom: %{0 => 0, 1 => 1},
-        blossom_match: %{}
-      }
-
-      assert_raise RuntimeError, ~r/blossom_ids_to_root\/2 step budget/, fn ->
-        WeightedMatching.__walk_for_test__(:blossom_ids_to_root, state, 0)
-      end
-    end
-
-    test "path_to_target/4 raises rather than looping on a cyclic label_edge" do
-      state = %{
-        n: 4,
-        label: %{0 => :inner, 1 => :inner},
-        label_edge: %{0 => {1, 1}, 1 => {0, 0}},
-        in_blossom: %{0 => 0, 1 => 1},
-        blossom_match: %{}
-      }
-
-      # Target 9 is on neither end of the cycle, so the walk never lands.
-      assert_raise RuntimeError, ~r/path_to_target\/4 step budget/, fn ->
-        WeightedMatching.__walk_for_test__(:path_to_target, state, {0, 0, 9})
-      end
-    end
-
-    test "a well-formed walk of more than the budget's worth of vertices still completes" do
-      # 40 vertices, a path graph: the ordinary solve path is unaffected
-      # by the budget for any structure it actually builds.
+  describe "long paths" do
+    test "a 40-vertex path is matched" do
       edges = for i <- 0..38, do: {i, i + 1, 10 + rem(i * 7, 5)}
       matching = WeightedMatching.solve(40, edges)
       assert map_size(matching) > 0
