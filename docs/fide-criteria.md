@@ -18,8 +18,9 @@ Worked companion, added 2026-08-17: **Mario Held, *Mastering the Dutch*** - a
 72-page tournament example developed with C.04.3 version 2026, published by
 the FIDE Technical Commission
 (<https://tec.fide.com/wp-content/uploads/2026/07/Mastering_the_Dutch_2026.pdf>).
-It confirms two rules this engine had derived from bbpPairings' source and
-from measurement rather than from the rules text:
+It confirms two rules this engine had settled by comparison with the
+reference implementation and by measurement rather than from the rules
+text:
 
 * **C1, C2, C3 are the absolute criteria**, and C2 is the PAB rule - the
   assignee must be a player who "did not receive a previous PAB, a forfeit
@@ -124,14 +125,12 @@ An `XXP` line - "these players must never meet", for family members, the
 same club, or a federation exclusion rule - is not in the handbook's list,
 because it is not a pairing rule: it is an instruction the arbiter gives
 the engine about this particular event. But it has exactly C1's STANDING,
-and bbpPairings settles that rather than leaving it to taste. `compatible`
-(`dutch.cpp:39-68`) tests one `forbiddenPairs` set before it looks at
-colour at all, and C1 itself reaches that test by being inserted into the
-very same set (`dutch.cpp:653-666`). One lookup, two rules.
+and it is treated exactly as C1 is: a pair that may not be formed, checked
+before colour is looked at, never a cost.
 
 So it lives in `legal_pair?/2` beside C1 and is never weighed against
 anything. One line names a GROUP, not a pair: `XXP 4 9 17` forbids 4-9,
-4-17 and 9-17 alike (`readForbiddenPairsXxp`, `trf.cpp:554-568`).
+4-17 and 9-17 alike, as the reference binary reads it too.
 
 Acceleration (`XXA`) is the mirror image - not a criterion at all, but a
 change to the score every criterion reads. See `with_acceleration/2` in
@@ -224,8 +223,9 @@ bbpPairings' `computeEdgeWeight` does the same inversion.
    merely make that bit MORE permissive, which is the wrong direction.
 
    **The structural hypothesis was then tested directly, and it holds.**
-   `global_cascade/2` (now the only path; there is no flag) is bbpPairings'
-   architecture ported stage for stage: the graph is the current bracket
+   `global_cascade/2` (now the only path; there is no flag) was then a
+   stage-for-stage port of bbpPairings' architecture (replaced in full
+   after 0.58.0 by the cascade docs/dutch-cascade.md specifies): the graph is the current bracket
    plus the whole next score group, and each bracket is solved up to eight
    times, every solve answering one question and freezing the answer
    before the next is asked. C8 stops being a lookahead in that design -

@@ -5,8 +5,8 @@ First ten thousand players (one round of a big open, timed at 1,000 to
 (`Pairing.pair_variants/3`, the batch behind OpenPairings' next-round
 preview). Then the timing study, which measures
 all three engines on 3,000 random positions and is the figure to quote.
-Then eight passes, newest first: the matcher rewritten from the
-literature, the
+Then nine passes, newest first: the cascade rewritten from the
+regulations, the matcher rewritten from the literature, the
 whole-field build, the weighted matcher itself (the blossom fallback), the slow tail of the last
 round, the slow spots the direct bracket left, the
 direct bracket on odd fields, the direct bracket itself, which took the
@@ -635,6 +635,165 @@ left](#what-is-left)). Positions outside the tail are unchanged.
   447,152 rounds identical in the default configuration and 44,325 in
   check mode with every new answer held to the path it replaces - see the
   slow tail's [How it was checked](#how-it-was-checked).
+
+## The cascade, rewritten from the regulations (2026-11-12)
+
+The bracket cascade in `Pairing` was replaced by the one
+[dutch-cascade.md](dutch-cascade.md) specifies: each bracket paired by a
+chain of filters, asked as per-player probes on the round matcher and
+committed by hold, cut and fix. The bar was the matcher pass's: the same
+pairings on every default setting, and no field size slower. Old here is
+main after the matcher pass (062a63a, the cascade of 0.58.0 on the new
+matcher); the VM corpus compares against v0.58.0 itself.
+
+### Same answers
+
+On the VM, v0.58.0 against this branch, every axis of the standing corpus
+(`tools/perf_diff.exs`, each side on 8 of the 16 threads):
+
+* default settings, every round identical in all four fingerprints
+  (pairs, explanation, the perturbed pairing's explanation and
+  judgement, the alternatives): small 370,781 rounds, large 5,497, early
+  1,980, and `f_nofast` (every bracket on the field graph) 26,120;
+* `bench/scale.exs`: the generator (`SCALE_GEN=1`, 1,000 tournaments each
+  at 40, 100, 150 and 300 players, eleven rounds) 44,000 of 44,000 round
+  digests identical, and 100, 400, 600 and 10,000 players 28 of 28;
+* `mix test` with the bbpPairings and three-way (Gacrux) comparisons
+  included: 1,465 passed.
+
+Locally, against main as well: the 60-tournament default and byes axes,
+the reference path (`AINALRAMI_CERT=off AINALRAMI_DIRECT=off
+AINALRAMI_NOFAST=1`) and `AINALRAMI_CERT=force` at 30-90 players, about
+1,900 rounds, identical.
+
+The two `flags` axes that switch on non-default settings differ, on
+purpose:
+
+| axis | against | tournaments whose pairs differ | rounds, pairs differ | rounds on one side only | rounds, explanation differs |
+|---|---|---:|---:|---:|---:|
+| `f_strand` (3,000) | v0.58.0 | 314 | 1,649 | 25 | 1,693 |
+| `f_strand` (3,000) | main | 318 | 1,626 | 29 | 1,662 |
+| `f_completion` (2,000) | v0.58.0 | 4 | 11 | 0 | 16,817 |
+| `f_completion` (2,000) | main | 7 | 36 | 0 | 16,817 |
+
+`f_strand` forces the completion repair on a tenth of rounds. Its weights
+tied, and which tied repair came out was the matcher's choice (see the
+matcher pass's "Ties" below); the repair now ends in a band that orders
+every matching strictly (docs/dutch-cascade.md, section 8), so it is a
+rule's choice instead. Once one round differs, the tournament's later
+rounds are played from a different history. `f_completion`'s explanation
+differs on nearly every round because that experimental mode now has a
+rung of its own for the pair count (reading 4), which `explain_round/3`
+names; its pairs differ in 7 tournaments of 2,000 against main.
+
+
+### Speed
+
+`bench/scale.exs` against 062a63a, one 16-thread Windows desktop, seven
+rounds, best of the alternating runs; every round identical:
+
+| field | r1 | r2 | r3 | r4 | r5 | r6 | r7 |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| 100 before | 1 ms | 1 ms | 1 ms | 3 ms | 4 ms | 12 ms | 2 ms |
+| 100 after | 1 ms | 1 ms | 1 ms | 3 ms | 4 ms | 12 ms | 2 ms |
+| 400 before | 3 ms | 5 ms | 6 ms | 7 ms | 20 ms | 12 ms | 9 ms |
+| 400 after | 4 ms | 5 ms | 6 ms | 7 ms | 20 ms | 12 ms | 9 ms |
+| 600 before | 6 ms | 8 ms | 10 ms | 9 ms | 11 ms | 13 ms | 13 ms |
+| 600 after | 6 ms | 8 ms | 10 ms | 9 ms | 11 ms | 13 ms | 13 ms |
+| 1,000 before | 9 ms | 13 ms | 16 ms | 18 ms | 19 ms | 19 ms | 20 ms |
+| 1,000 after | 9 ms | 13 ms | 16 ms | 18 ms | 18 ms | 19 ms | 20 ms |
+| 10,000 before | 111 ms | 199 ms | 259 ms | 234 ms | 252 ms | 256 ms | 295 ms |
+| 10,000 after | 108 ms | 196 ms | 258 ms | 235 ms | 251 ms | 256 ms | 296 ms |
+
+The first build of the new ladder read its rungs from a table and folded
+it once per edge, and was 6-13% slower at 10,000 players (round 2: 198
+ms before, 221 after). Written out rung by rung it is level.
+
+`tools/proof_bench.exs`, round 6 once, two runs each (one where they
+agree):
+
+| players | reference path, before | after | proof on, before | after | proof peak memory, before | after |
+|---:|---:|---:|---:|---:|---:|---:|
+| 100 | 84-85 ms | 85-89 ms | 156 ms | 157-159 ms | 59-67 MB | 60-66 MB |
+| 200 | 489-516 ms | 501-525 ms | 823-854 ms | 837-841 ms | 89-96 MB | 89-99 MB |
+| 400 | 3,399-3,404 ms | 3,372-3,380 ms | 5,236-5,467 ms | 5,237-5,265 ms | 275-324 MB | 323 MB |
+| 600 | 8,105-8,133 ms | 8,054-8,154 ms | 13,655-13,852 ms | 13,548-13,667 ms | 712-830 MB | 710 MB |
+| 1,000 | 34,599-35,962 ms | 34,289-34,450 ms | 57,113-57,971 ms | 56,507-56,622 ms | 2,306-2,307 MB | 2,308 MB |
+
+The proof off is level at every size (4 to 50 ms). A proof at 400 players
+and up records one weighted solve fewer than before (224 against 225 at
+400); the cascade asks its questions in a different order and one fewer
+of them needs a full solve.
+
+The proofs the new cascade writes pass `tools/verify-proof/verify.exs`
+(30, 100, 200 and 400 players checked, every published pair read off a
+proven matching).
+
+### Soft pairs
+
+The local graph is a shortcut only without soft pairs (spec section 5):
+with them every bracket is paired on the field graph, because whether the
+field below can still avoid its soft pairs depends on whom the bracket
+floats. That is the right answer and it is not free. `bench/scale.exs`
+with `SCALE_SOFT=strong|weak` deals the field into clubs of 4 to 10
+players and declares every same-club pair soft - club protection at a
+realistic density: six clubmates on average, whatever the field size.
+Against 062a63a on the VM, eleven rounds, best of the alternating runs
+(5 at 100 players, 3 at 400, 1 at 1,000), two threads per run:
+
+| field | soft | median before | after | slowest before | after | total before | after |
+|---|---|---:|---:|---:|---:|---:|---:|
+| 100 | strong | 80 ms | 161 ms | 180 ms | 179 ms | 973 ms | 1.61 s |
+| 100 | weak | 81 ms | 162 ms | 179 ms | 178 ms | 963 ms | 1.59 s |
+| 400 | strong | 694 ms | 5.1 s | 12.41 s | 12.65 s | 19.2 s | 64.7 s |
+| 400 | weak | 621 ms | 5.06 s | 12.96 s | 14.66 s | 19.4 s | 73.6 s |
+| 1,000 | strong | 4.29 s | 50.4 s | 14.96 s | 190.8 s | 68.9 s | 705 s |
+| 1,000 | weak | 4.28 s | 49.8 s | 14.25 s | 188.1 s | 67.2 s | 694 s |
+
+Round by round, strong (weak is within a few percent of it):
+
+| field | r1 | r2 | r3 | r4 | r5 | r6 | r7 | r8 | r9 | r10 | r11 |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| 400 before | 12.41 s | 1.37 s | 749 ms | 694 ms | 971 ms | 411 ms | 939 ms | 177 ms | 251 ms | 637 ms | 631 ms |
+| 400 after | 12.65 s | 2.47 s | 4.27 s | 6.59 s | 3.8 s | 9.05 s | 6.98 s | 5.1 s | 3.16 s | 5.04 s | 5.56 s |
+| 1,000 before | 14.96 s | 14.39 s | 13.22 s | 6.83 s | 4.29 s | 2.76 s | 2.26 s | 2.18 s | 1.66 s | 1.7 s | 4.63 s |
+| 1,000 after | 13.17 s | 42.76 s | 62.61 s | 34.31 s | 28.48 s | 49.11 s | 77.55 s | 88.1 s | 67.65 s | 50.4 s | 190.8 s |
+
+Every round identical to 062a63a except two at 400 players, strong
+(rounds 8 and 9): those are the local graph's wrong answers this branch
+exists to stop giving. 2,000 and 5,000 players were not run; at a minute
+and more a round at 1,000 there was nothing left to learn from them but
+patience.
+
+Without soft pairs nothing moved (control, same run): 100 to 5,000
+players at 1.0x, the slowest round at 5,000 players 297 ms before and 301
+ms after, 55 of 55 rounds identical.
+
+Two things are in that table. The first is old: round 1 with soft pairs
+is one bracket of the whole field paired on the field graph, the direct
+walk is off (`direct_allowed?/2`) and every seat in 4.8 is a probe and a
+re-solve, so 400 players took 13 seconds on main already and the two
+builds are level there (15 seconds at 1,000). The second is this branch:
+main paired the later rounds' brackets locally, sometimes wrongly, and
+the field graph costs 2 to 40 times as much per round, the gap widest in
+the last rounds. At 1,000 players that is half a minute to three minutes
+a round where main took two to fifteen seconds: slow enough that a big
+open with club protection will notice. Weak pairs pay the same as strong
+ones; the rung's position does not change how many brackets there are.
+
+A cheap exact remedy was looked for and not found. Letting a bracket use
+the local graph when no soft pair involves its players or anyone below
+them is exact, but with clubs everyone has clubmates below and it never
+fires. For
+weak pairs a bracket that floats nobody cannot change the field below, so
+its local answer should stand (not proven, not built); one that does float
+has its floaters chosen, among C6-C21 ties, by what they do to soft
+pairs further down, which the local graph cannot see. That leaves the
+field-graph solve itself: about 80% of a round, at 400 and at 1,000
+players, is the matcher solving again - after the 4.8 seat probes, and at
+1,000 players nearly half of it inside certified reads
+(`forced_loses?/5`). Making that cheaper is matcher and certificate work,
+not a soft-pair switch.
 
 ## The matcher, rewritten from the literature (2026-11-12)
 
