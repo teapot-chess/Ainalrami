@@ -298,6 +298,14 @@ claim and refuses otherwise), and in the certified mode it reads answers
 it can prove are the same in every optimum. These are speed only: the
 corpus holds them to the plain computation (docs/performance.md).
 
+The **local graph** is one of them: a bracket whose members are all clear
+of the bye is paired on its own vertices, the next score group stood in by
+one vertex, because then only completion looks past the bracket. With soft
+pairs set that is no longer true - the soft rung scores pairs at every
+reach (section 3), so whom a bracket floats decides whether the field
+below can still avoid its soft pairs - and every bracket goes on the field
+graph instead.
+
 ## 6. Carrying forward, and the C9 gate
 
 C9 "applies to brackets downfloating exactly one player, who will receive
