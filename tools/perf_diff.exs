@@ -281,6 +281,12 @@ defmodule PerfDiff do
     end
   end
 
+  # A round with nobody paired - everyone withdrawn or on a requested bye -
+  # still rolls for the alternatives, and `:rand.uniform_s(0, _)` has no
+  # answer. Nothing to pick, no draw taken, so every other round's stream
+  # is untouched.
+  defp pick(rng, []), do: {nil, rng}
+
   defp pick(rng, list) do
     {i, rng} = :rand.uniform_s(length(list), rng)
     {Enum.at(list, i - 1), rng}
