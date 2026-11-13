@@ -729,6 +729,72 @@ The proofs the new cascade writes pass `tools/verify-proof/verify.exs`
 (30, 100, 200 and 400 players checked, every published pair read off a
 proven matching).
 
+### Soft pairs
+
+The local graph is a shortcut only without soft pairs (spec section 5):
+with them every bracket is paired on the field graph, because whether the
+field below can still avoid its soft pairs depends on whom the bracket
+floats. That is the right answer and it is not free. `bench/scale.exs`
+with `SCALE_SOFT=strong|weak` deals the field into clubs of 4 to 10
+players and declares every same-club pair soft - club protection at a
+realistic density: six clubmates on average, whatever the field size.
+Against 062a63a on the VM, eleven rounds, best of the alternating runs
+(5 at 100 players, 3 at 400, 1 at 1,000), two threads per run:
+
+| field | soft | median before | after | slowest before | after | total before | after |
+|---|---|---:|---:|---:|---:|---:|---:|
+| 100 | strong | 80 ms | 161 ms | 180 ms | 179 ms | 973 ms | 1.61 s |
+| 100 | weak | 81 ms | 162 ms | 179 ms | 178 ms | 963 ms | 1.59 s |
+| 400 | strong | 694 ms | 5.1 s | 12.41 s | 12.65 s | 19.2 s | 64.7 s |
+| 400 | weak | 621 ms | 5.06 s | 12.96 s | 14.66 s | 19.4 s | 73.6 s |
+| 1,000 | strong | 4.29 s | 50.4 s | 14.96 s | 190.8 s | 68.9 s | 705 s |
+| 1,000 | weak | 4.28 s | 49.8 s | 14.25 s | 188.1 s | 67.2 s | 694 s |
+
+Round by round, strong (weak is within a few percent of it):
+
+| field | r1 | r2 | r3 | r4 | r5 | r6 | r7 | r8 | r9 | r10 | r11 |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| 400 before | 12.41 s | 1.37 s | 749 ms | 694 ms | 971 ms | 411 ms | 939 ms | 177 ms | 251 ms | 637 ms | 631 ms |
+| 400 after | 12.65 s | 2.47 s | 4.27 s | 6.59 s | 3.8 s | 9.05 s | 6.98 s | 5.1 s | 3.16 s | 5.04 s | 5.56 s |
+| 1,000 before | 14.96 s | 14.39 s | 13.22 s | 6.83 s | 4.29 s | 2.76 s | 2.26 s | 2.18 s | 1.66 s | 1.7 s | 4.63 s |
+| 1,000 after | 13.17 s | 42.76 s | 62.61 s | 34.31 s | 28.48 s | 49.11 s | 77.55 s | 88.1 s | 67.65 s | 50.4 s | 190.8 s |
+
+Every round identical to 062a63a except two at 400 players, strong
+(rounds 8 and 9): those are the local graph's wrong answers this branch
+exists to stop giving. 2,000 and 5,000 players were not run; at a minute
+and more a round at 1,000 there was nothing left to learn from them but
+patience.
+
+Without soft pairs nothing moved (control, same run): 100 to 5,000
+players at 1.0x, the slowest round at 5,000 players 297 ms before and 301
+ms after, 55 of 55 rounds identical.
+
+Two things are in that table. The first is old: round 1 with soft pairs
+is one bracket of the whole field paired on the field graph, the direct
+walk is off (`direct_allowed?/2`) and every seat in 4.8 is a probe and a
+re-solve, so 400 players took 13 seconds on main already and the two
+builds are level there (15 seconds at 1,000). The second is this branch:
+main paired the later rounds' brackets locally, sometimes wrongly, and
+the field graph costs 2 to 40 times as much per round, the gap widest in
+the last rounds. At 1,000 players that is half a minute to three minutes
+a round where main took two to fifteen seconds: slow enough that a big
+open with club protection will notice. Weak pairs pay the same as strong
+ones; the rung's position does not change how many brackets there are.
+
+A cheap exact remedy was looked for and not found. Letting a bracket use
+the local graph when no soft pair involves its players or anyone below
+them is exact, but with clubs everyone has clubmates below and it never
+fires. For
+weak pairs a bracket that floats nobody cannot change the field below, so
+its local answer should stand (not proven, not built); one that does float
+has its floaters chosen, among C6-C21 ties, by what they do to soft
+pairs further down, which the local graph cannot see. That leaves the
+field-graph solve itself: about 80% of a round, at 400 and at 1,000
+players, is the matcher solving again - after the 4.8 seat probes, and at
+1,000 players nearly half of it inside certified reads
+(`forced_loses?/5`). Making that cheaper is matcher and certificate work,
+not a soft-pair switch.
+
 ## The matcher, rewritten from the literature (2026-11-12)
 
 `WeightedMatching` was replaced in full by a primal-dual blossom matcher
