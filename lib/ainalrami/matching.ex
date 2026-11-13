@@ -115,61 +115,55 @@ defmodule Ainalrami.Matching do
     n = length(players)
     arr = List.to_tuple(players)
     full_mask = (1 <<< n) - 1
-    memo_key = make_ref()
     keep = if n > @max_bracket_for_alternatives, do: 1, else: @candidates_per_count
-    Process.put(memo_key, %{})
+    env = %{arr: arr, n: n, pair: pair_weight_fun, float: float_weight_fun, keep: keep}
+    {result, _memo} = solve(full_mask, env, %{})
+    result
+  end
 
-    try do
-      solve(full_mask, arr, n, pair_weight_fun, float_weight_fun, memo_key, keep)
-    after
-      Process.delete(memo_key)
+  # The subset DP, its memo (mask -> result) threaded through and returned.
+  defp solve(0, _env, memo), do: {%{0 => [{0, [], []}]}, memo}
+
+  defp solve(mask, env, memo) do
+    case memo do
+      %{^mask => result} ->
+        {result, memo}
+
+      _ ->
+        {result, memo} = compute_solve(mask, env, memo)
+        {result, Map.put(memo, mask, result)}
     end
   end
 
-  defp solve(0, _arr, _n, _pair_weight_fun, _float_weight_fun, _memo_key, _keep),
-    do: %{0 => [{0, [], []}]}
-
-  defp solve(mask, arr, n, pair_weight_fun, float_weight_fun, memo_key, keep) do
-    cache = Process.get(memo_key)
-
-    case Map.fetch(cache, mask) do
-      {:ok, result} ->
-        result
-
-      :error ->
-        result = compute_solve(mask, arr, n, pair_weight_fun, float_weight_fun, memo_key, keep)
-        Process.put(memo_key, Map.put(Process.get(memo_key), mask, result))
-        result
-    end
-  end
-
-  defp compute_solve(mask, arr, n, pair_weight_fun, float_weight_fun, memo_key, keep) do
+  defp compute_solve(mask, env, memo) do
+    %{arr: arr, n: n, pair: pair_weight_fun, float: float_weight_fun, keep: keep} = env
     i = lowest_set_bit_index(mask, 0)
     p = elem(arr, i)
     rest_mask = mask &&& bnot(1 <<< i)
     float_weight = float_weight_fun.(p)
 
+    {rest, memo} = solve(rest_mask, env, memo)
+
     float_options =
-      rest_mask
-      |> solve(arr, n, pair_weight_fun, float_weight_fun, memo_key, keep)
+      rest
       |> Enum.reduce(%{}, fn {count, candidates}, acc ->
         Enum.reduce(candidates, acc, fn {weight, pairs, floaters}, inner ->
           put_candidate(inner, count + 1, {weight + float_weight, pairs, [p | floaters]}, keep)
         end)
       end)
 
-    Enum.reduce(0..(n - 1), float_options, fn j, acc ->
+    Enum.reduce(0..(n - 1), {float_options, memo}, fn j, {acc, memo} ->
       if bit_set?(rest_mask, j) do
         q = elem(arr, j)
 
         case pair_weight_fun.(p, q) do
           nil ->
-            acc
+            {acc, memo}
 
           weight ->
-            rest_mask
-            |> bandnot(j)
-            |> solve(arr, n, pair_weight_fun, float_weight_fun, memo_key, keep)
+            {sub, memo} = solve(bandnot(rest_mask, j), env, memo)
+
+            sub
             |> Enum.reduce(acc, fn {count, candidates}, inner ->
               Enum.reduce(candidates, inner, fn {rest_weight, pairs, floaters}, innermost ->
                 put_candidate(
@@ -180,9 +174,10 @@ defmodule Ainalrami.Matching do
                 )
               end)
             end)
+            |> then(&{&1, memo})
         end
       else
-        acc
+        {acc, memo}
       end
     end)
   end

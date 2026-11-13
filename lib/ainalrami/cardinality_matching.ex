@@ -83,36 +83,55 @@ defmodule Ainalrami.CardinalityMatching do
   graph searched is `adj` plus the pairs of `match`.
   """
   def augment_from(adj, match, root, dead) do
-    case search(adj, match, root, dead) do
-      {:path, to, p} ->
-        if Ainalrami.Proof.recording?() do
-          Ainalrami.Proof.cardinality(adj, %{
-            "claim" => "augment",
-            "matching" => pairs(match),
-            "root" => root,
-            "dead" => Enum.sort(dead),
-            "path" => to |> path_to_root(p, match) |> Enum.reverse()
-          })
-        end
+    {result, _adj} = augment_from_memo(adj, match, root, dead)
+    result
+  end
 
-        {:ok, augment(to, p, match)}
+  @doc """
+  `augment_from/4` on a graph whose rows are built on first use and kept:
+  `adj` is `{:memo, build, rows}`, `build` a function from a vertex to its
+  neighbour list and `rows` the map of those already built. Returns
+  `{result, adj}`, `adj` holding every row the search built, so the caller
+  can keep them for the next search. Any other `adj` comes back as given.
+  """
+  def augment_from_memo(adj, match, root, dead) do
+    {found, adj} = do_search(adj, match, root, dead, nil)
+    proof_adj = with {:memo, build, _rows} <- adj, do: build
 
-      {:none, used, p} ->
-        # The search's inner vertices are a Tutte set: what it reached, less
-        # them, falls apart into one more odd piece than there are of them,
-        # every piece inside what the matching covers plus the root.
-        if Ainalrami.Proof.recording?() do
-          Ainalrami.Proof.cardinality(adj, %{
-            "claim" => "blocked",
-            "matching" => pairs(match),
-            "root" => root,
-            "dead" => Enum.sort(dead),
-            "barrier" => p |> Map.keys() |> Enum.reject(&MapSet.member?(used, &1)) |> Enum.sort()
-          })
-        end
+    result =
+      case found do
+        {:path, to, p} ->
+          if Ainalrami.Proof.recording?() do
+            Ainalrami.Proof.cardinality(proof_adj, %{
+              "claim" => "augment",
+              "matching" => pairs(match),
+              "root" => root,
+              "dead" => Enum.sort(dead),
+              "path" => to |> path_to_root(p, match) |> Enum.reverse()
+            })
+          end
 
-        :none
-    end
+          {:ok, augment(to, p, match)}
+
+        {:none, used, p} ->
+          # The search's inner vertices are a Tutte set: what it reached, less
+          # them, falls apart into one more odd piece than there are of them,
+          # every piece inside what the matching covers plus the root.
+          if Ainalrami.Proof.recording?() do
+            Ainalrami.Proof.cardinality(proof_adj, %{
+              "claim" => "blocked",
+              "matching" => pairs(match),
+              "root" => root,
+              "dead" => Enum.sort(dead),
+              "barrier" =>
+                p |> Map.keys() |> Enum.reject(&MapSet.member?(used, &1)) |> Enum.sort()
+            })
+          end
+
+          :none
+      end
+
+    {result, adj}
   end
 
   @doc """
@@ -239,7 +258,7 @@ defmodule Ainalrami.CardinalityMatching do
 
   defp barrier(adj, d) do
     d
-    |> Enum.flat_map(&neighbours(adj, &1))
+    |> Enum.flat_map(&(adj |> neighbours(&1) |> elem(0)))
     |> Enum.reject(&MapSet.member?(d, &1))
     |> Enum.uniq()
     |> Enum.sort()
@@ -283,7 +302,12 @@ defmodule Ainalrami.CardinalityMatching do
   # `whole`, when given, is the order of the graph: the search, which must
   # then be one that finds no augmenting path, stops once every vertex is
   # outer (`exposable_lazy/2`).
-  defp search(adj, match, root, dead, whole \\ nil) do
+  defp search(adj, match, root, dead, whole \\ nil),
+    do: adj |> do_search(match, root, dead, whole) |> elem(0)
+
+  # `search/5`, and the graph back: a `{:memo, build, rows}` graph with the
+  # rows the search built added.
+  defp do_search(adj, match, root, dead, whole) do
     st = %{
       group: %{},
       gbase: %{},
@@ -309,23 +333,36 @@ defmodule Ainalrami.CardinalityMatching do
   defp bfs(queue, adj, st) do
     case :queue.out(queue) do
       {:empty, _} ->
-        {:none, st.used, st.p}
+        {{:none, st.used, st.p}, adj}
 
       {{:value, v}, queue} ->
-        case scan(neighbours(adj, v), v, queue, st) do
+        {row, adj} = neighbours(adj, v)
+
+        case scan(row, v, queue, st) do
           {:path, _to, _p} = found ->
-            found
+            {found, adj}
 
           {:cont, queue, st} ->
             if st.whole != nil and MapSet.size(st.used) == st.whole,
-              do: {:none, st.used, st.p},
+              do: {{:none, st.used, st.p}, adj},
               else: bfs(queue, adj, st)
         end
     end
   end
 
-  defp neighbours(adj, v) when is_tuple(adj), do: elem(adj, v)
-  defp neighbours(adj, v) when is_function(adj, 1), do: adj.(v)
+  defp neighbours({:memo, build, rows} = adj, v) do
+    case rows do
+      %{^v => row} ->
+        {row, adj}
+
+      _ ->
+        row = build.(v)
+        {row, {:memo, build, Map.put(rows, v, row)}}
+    end
+  end
+
+  defp neighbours(adj, v) when is_tuple(adj), do: {elem(adj, v), adj}
+  defp neighbours(adj, v) when is_function(adj, 1), do: {adj.(v), adj}
 
   defp scan([], _v, queue, st), do: {:cont, queue, st}
 
