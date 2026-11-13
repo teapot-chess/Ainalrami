@@ -26,6 +26,9 @@
 #     arbiter keeps apart);
 #   * with `SCALE_ACCEL=baku`, Baku acceleration (FIDE C.04.7): virtual
 #     points for the top half's first rounds.
+#   * with `SCALE_SOFT=strong` or `weak`, club protection: the field dealt
+#     into clubs of 4 to 10 players and every same-club pair declared soft,
+#     the way an arbiter keeps clubmates apart without forbidding it.
 #
 # The tournament is played forward by the engine in THIS tree, and the
 # finished field is cached under `bench_corpus/scale/` (gitignored), so a
@@ -60,6 +63,9 @@
 #   SCALE_COUNT     tournaments per size in SCALE_GEN mode (default 100)
 #   SCALE_SEED_FROM first seed in SCALE_GEN mode (default 1)
 #   SCALE_ACCEL     baku: Baku acceleration (C.04.7) on every tournament
+#   SCALE_SOFT      strong | weak: soft pairs (an OpenPairings opt-in, not
+#                   FIDE) at that position on the ladder - the field split
+#                   into clubs of 4 to 10 players, every same-club pair soft
 
 defmodule ScaleBench.Tournament do
   @moduledoc false
@@ -153,11 +159,37 @@ defmodule ScaleBench.Tournament do
     end)
   end
 
+  # `SCALE_SOFT=strong|weak`: the field dealt into clubs of 4 to 10 players,
+  # every same-club pair soft. Its own generator, so the roster, results and
+  # forbidden pairs are the same draw as without it.
+  def soft(_n, _seed, nil), do: []
+
+  def soft(n, seed, position) when position in ["strong", "weak"] do
+    rng = :rand.seed_s(:exsss, {seed, n, 104_729})
+    {order, rng} =
+      Enum.map_reduce(1..n, rng, fn r, rng ->
+        {u, rng} = :rand.uniform_s(rng)
+        {{u, r}, rng}
+      end)
+
+    {clubs, _} = deal(order |> Enum.sort() |> Enum.map(&elem(&1, 1)), rng, [])
+    [soft_pairs: clubs, soft_position: String.to_existing_atom(position)]
+  end
+
+  defp deal([], rng, acc), do: {acc, rng}
+
+  defp deal(ranks, rng, acc) do
+    {size, rng} = :rand.uniform_s(7, rng)
+    {club, rest} = Enum.split(ranks, size + 3)
+    deal(rest, rng, if(length(club) >= 2, do: [club | acc], else: acc))
+  end
+
   def play(n, rounds, seed, on_round \\ fn _ -> :ok end) do
     rng = :rand.seed_s(:exsss, {seed, n, 7919})
     {roster, forbidden, rng} = roster(n, rounds, rng)
     roster = accelerate(roster, rounds, System.get_env("SCALE_ACCEL"))
     opts = [expected_rounds: rounds, forbidden_pairs: forbidden, initial_colour: "w"]
+    opts = opts ++ soft(n, seed, System.get_env("SCALE_SOFT"))
 
     {field, _withdrawn, _rng} =
       Enum.reduce_while(1..rounds, {roster, MapSet.new(), rng}, fn round, {field, gone, rng} ->
@@ -303,6 +335,7 @@ defmodule ScaleBench do
     dir = System.get_env("SCALE_CORPUS", "bench_corpus/scale")
     File.mkdir_p!(dir)
     accel = if a = System.get_env("SCALE_ACCEL"), do: "_#{a}", else: ""
+    accel = if s = System.get_env("SCALE_SOFT"), do: "#{accel}_soft#{s}", else: accel
     path = Path.join(dir, "p#{size}_r#{rounds}_s#{seed}#{accel}.bin")
 
     if File.exists?(path) do
