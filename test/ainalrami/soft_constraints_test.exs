@@ -102,4 +102,60 @@ defmodule Ainalrami.SoftConstraintsTest do
     # Different pairs, and not one FIDE rung worse for it.
     assert {:tie, +0.0, _lex} = Ainalrami.Alternatives.compare(plain_report, steered_report)
   end
+
+  # perf_diff s_plain, tournament seed 50059205, round 8: 25 players, rank 1
+  # on the bye. At the bottom, 4-6 and 15-18 are soft, 4-18 and 6-18 were
+  # played, so 6 and 18 can only avoid their soft pairs by meeting someone
+  # from higher up. The 3.0 bracket used to pair itself on the local graph,
+  # which cannot see that; the bottom then took the bye for 18 (who had one
+  # already), the completion repair threw it out and pulled 9 (5.0) and 11
+  # (4.5) all the way down instead - three floaters out of the 4.5 bracket
+  # where one will do. v0.58.0 paired 18-9 6-11, the first clean-cascade
+  # build 6-9 18-11; the field graph's answer is neither.
+  test "soft pairs keep a bracket off the local graph when the field below needs its floaters" do
+    %{players: players} =
+      Trf.parse(File.read!("test/fixtures/soft_pairs/seed50059205-r8-p25.trf"))
+
+    opts = [expected_rounds: 9, initial_colour: "w"]
+    soft = [soft_pairs: [[4, 13, 6], [1, 17], [15, 18]], soft_position: :strong]
+    unordered = &MapSet.new(&1, fn {w, b} -> MapSet.new([w, b]) end)
+
+    # Without them, the plain Dutch round - bbpPairings 6.0.0 --dutch pairs
+    # this TRF identically.
+    assert unordered.(Pairing.pair_next_round(players, opts)) ==
+             unordered.([
+               {3, 13},
+               {11, 9},
+               {21, 23},
+               {25, 20},
+               {12, 16},
+               {24, 22},
+               {2, 8},
+               {10, 5},
+               {17, 7},
+               {19, 14},
+               {4, 6},
+               {18, 15},
+               {1, nil}
+             ])
+
+    pairs = Pairing.pair_next_round(players, opts ++ soft)
+
+    assert unordered.(pairs) ==
+             unordered.([
+               {3, 13},
+               {11, 9},
+               {21, 23},
+               {25, 20},
+               {12, 16},
+               {24, 22},
+               {2, 8},
+               {10, 5},
+               {19, 14},
+               {6, 17},
+               {18, 7},
+               {4, 15},
+               {1, nil}
+             ])
+  end
 end

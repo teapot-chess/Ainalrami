@@ -3794,12 +3794,28 @@ defmodule Ainalrami.Pairing do
   # and it is the one the corpus is asked to judge: the small-field axes
   # put every bracket on the field graph, and the 60-120 and 150-250
   # axes put the large ones here.
+  #
+  # Soft pairs take the local graph off the table altogether. The argument
+  # above is that only completion looks past the bracket, and completion is
+  # settled by `oracle_completable?/2`. A soft pair's rung sits between
+  # completion and C6 (`:strong`) or below C21 (`:weak`), and in either
+  # place it scores the field below as well: whether the players down there
+  # can still avoid their soft pairs depends on whom this bracket floats.
+  # A local graph cannot see that. perf_diff seed 50059205, round 8
+  # (s_plain, strong soft pairs): the 3.0 bracket paired itself locally,
+  # the bottom was left choosing between two soft pairs and a second bye,
+  # took the bye, and `repair_completion/3` had to pull 9 and 11 down from
+  # 5.0 and 4.5 to clean up. The field graph floats two 3.0 players
+  # instead and keeps the 4.5 bracket's 9-11 (C6: one floater, not three).
+  # v0.58.0 did the same thing; the two only differed in how the repair
+  # broke its tie.
   @local_min_next_group 16
 
   defp local_eligible?(combined, nsgb, wsgb, ctx) do
     window = Enum.take(combined, min(wsgb, length(combined)))
 
     env_flag(@env_nofast_key, "AINALRAMI_NOFAST") == nil and nsgb >= 2 and
+      is_nil(Process.get(@soft_key)) and
       Enum.all?(window, fn p ->
         if ctx.odd_field?,
           do: not is_nil(ctx.bye_score) and p.points > ctx.bye_score,
