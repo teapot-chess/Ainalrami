@@ -1283,6 +1283,20 @@ under the [Microsoft Reference Source License](LICENSE) (Ms-RSL). You may read
 it; you may not run, copy, modify or distribute it. Versions published before
 2026-11-07 keep the licence they were published under.
 
+### Permissions granted
+
+The copyright holder can allow more than the licence does, one person or
+organisation at a time. Every such permission is listed here, so nobody has
+to take anyone's word for it.
+
+| Who | May | Since |
+| --- | --- | --- |
+| FIDE, its Technical Commission (TEC) and the testers they appoint | run Ainalrami, including builds from this repository, to test it and to assess it for endorsement | 2026-11-16 |
+
+Want to run it too, say to check pairings in your own events? Open an issue
+or write to the copyright holder. A permission counts once it is on this
+list.
+
 The engine is written from the regulations and the literature. The Dutch
 bracket cascade (`Ainalrami.Pairing`) follows its own specification,
 [docs/dutch-cascade.md](docs/dutch-cascade.md), written from C.04.3;
