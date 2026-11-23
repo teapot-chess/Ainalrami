@@ -3281,9 +3281,32 @@ Round #{round_number} - #{boards} board#{plural(boards)} over " <>
       0
     else
       Log.step("Checking #{rounds} round(s)")
+      parsed = rounds_present_as_total(parsed, rounds)
 
       results = Enum.map(1..rounds, &check_round(parsed, &1))
       finish_check(parsed, results, rounds)
+    end
+  end
+
+  # A file that never says how many rounds the tournament has: the rounds
+  # it holds are the tournament, so the last of them is the last round and
+  # gets the last round's colour rules. Without this the check paired the
+  # final round as if more were coming, and differed from every generator
+  # that knew better - bbpPairings' among them, which writes no count and
+  # whose own checker reads the file the same way.
+  defp rounds_present_as_total(parsed, rounds) do
+    # A bye entered ahead for a round not yet paired says that round exists.
+    total = parsed.players |> Enum.map(&last_mentioned/1) |> Enum.max(fn -> 0 end) |> max(rounds)
+
+    if parsed.tournament[:number_of_rounds] in [nil, 0] do
+      Log.detail(
+        "no round count in the file (142/XXR): the #{total} round(s) it mentions are the " <>
+          "tournament, round #{total} the last - --rounds=N says otherwise"
+      )
+
+      put_in(parsed.tournament[:number_of_rounds], total)
+    else
+      parsed
     end
   end
 
@@ -3734,6 +3757,12 @@ Round #{round_number} - #{boards} board#{plural(boards)} over " <>
   # An entry holding nothing at all - no opponent, no colour, no result.
   # `parse_games/1` keeps these for interior rounds a late entrant missed,
   # and they are evidence of nothing.
+  defp last_mentioned(player) do
+    player.games
+    |> Enum.with_index(1)
+    |> Enum.reduce(0, fn {game, round}, last -> if blank?(game), do: last, else: round end)
+  end
+
   defp blank?(game) do
     is_nil(game.opponent_rank) and is_nil(game.colour) and
       (is_nil(game.result) or String.trim(game.result) == "")
