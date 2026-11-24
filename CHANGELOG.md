@@ -66,6 +66,16 @@ with the reference on every one of them.
 
 ## [Unreleased]
 
+## [0.59.2] - 2026-11-24
+
+- [Fix] **`-g` writes where it was told to, or nowhere.** `ainalrami input.trf -g out.trf` took its first file name as the output, generated a tournament straight over `input.trf`, ignored `out.trf`, and exited 0 - atomically, so not even a half-written file was left to hint at what happened. Every other mode dropped spare file names just as quietly. Now a mode given more file names than it uses refuses (`-g` one, `-c` and `-x` one, `-p` and `-s` two) and names them.
+- [Fix] **One mode at a time.** `-p -c`, `-g -x` and the like ran whichever mode the dispatcher happened to ask about first and never mentioned the other. Refused now. `-x --explain` is still one mode wearing two names.
+- [Fix] **A starting rank given to two players is refused by the reader, at the line that repeats it.** It used to get through: pairing then died at the engine's backstop as an "unexpected error", `-s` kept whichever copy it liked, and two copies with different games were reported as a mutual-reference problem in the games, which was the one place the problem was not.
+- [Fix] **A file with no player records is not a tournament.** An empty file, a binary or a header with nobody under it was paired as a round of no boards: `-p` wrote `0` and exited 0, which a script cannot tell from success. Now `invalid TRF file: no player records`, exit 1. `-g`, which reads nothing, is unaffected.
+- [Fix] **The round count is held to something a tournament could be.** `142` and `XXR` took any integer: a negative one reached the engine's argument check as an "unexpected error" (and `Acceleration.baku/3` as a FunctionClauseError), and `XXR 1000000` was believed, at a cost in time and memory proportional to the belief. Both are now refused outside 0..999, naming the line; nought stays, because `-g --rounds=0` writes it. `--rounds` is held to the same ceiling, so `-g` cannot write a file the other modes would refuse.
+- [Fix] **A write that fails says which file, in the words of whoever asked.** A missing directory or a full disk under `-p`, `-g`, `-s` or `--proof` reached the backstop as an "unexpected error" naming a temp file the caller never typed. Now `could not write OUTPUT: reason`, exit 1, no help text.
+- [Change] **The README lists the options `--help` already did:** `--ratings`, `--rating-top`, `--rating-step`, `--rating-sigma` and `--half-bye-team-pct`, and the aliases `--initial-color`, `--explain` and `--standings`.
+- [Change] **Paths from one machine are no longer kept in the repository.** A few scripts, notes and a results log under `tmp/` and `docs/` carried absolute local paths; the scripts now work from their own location and the rest are redacted.
 - [Change] **`.gitattributes` says what is binary, and what is not.** `* text=auto eol=lf`, so a Windows checkout stops handing the tests CRLF, plus an explicit binary list (images, archives, fonts, databases) so nothing clever happens to them and `*.cmd`/`*.bat`/`*.ps1` keep the CRLF a command interpreter insists on. The interop fixtures stay `-text`, as before.
 
 ## [0.59.1] - 2026-11-23

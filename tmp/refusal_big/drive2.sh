@@ -1,5 +1,5 @@
 #!/bin/bash
-cd "C:/Users/jorian/Desktop/02cloud/VPS projects/ain-refusal-big" || exit 1
+cd "$(dirname "$0")/../.." || exit 1
 res=tmp/refusal_big/results.txt; log=tmp/refusal_big/drive2.log
 while ! grep -q "AXIS_A_DONE\|STOP" tmp/refusal_big/drive.log 2>/dev/null; do sleep 30; done
 grep -q STOP tmp/refusal_big/drive.log && { echo "axis a stopped" >> $log; exit 1; }

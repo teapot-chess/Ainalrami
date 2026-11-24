@@ -1,5 +1,5 @@
 #!/bin/bash
-cd "C:/Users/jorian/Desktop/02cloud/VPS projects/ain-refusal-big" || exit 1
+cd "$(dirname "$0")/../.." || exit 1
 res=tmp/refusal_big/results.txt
 # wait for chunk already running
 while tasklist | grep -q "erl.exe"; do sleep 5; done

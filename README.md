@@ -367,10 +367,10 @@ ainalrami input.trf -p output.trf
 |---|---|
 | `ainalrami input.trf -p output.trf` | pair the next round (a team file: team against team) |
 | `ainalrami input.trf -p` | same, printed to stdout |
-| `ainalrami input.trf -x` | pair the next round and explain it |
+| `ainalrami input.trf -x` | pair the next round and explain it (`--explain` is the same) |
 | `ainalrami -g output.trf` | Random Tournament Generator (`--team=swiss` or `--team=roundrobin` for a team event) |
 | `ainalrami input.trf -c` | Pairings Checker: replay and diff every round (team Swiss: team against team; team round robin: against the Berger tables) |
-| `ainalrami input.trf -s [output]` | the standings by the file's tie-break list (`202`/`212`) or `--tie-breaks=` |
+| `ainalrami input.trf -s [output]` | the standings by the file's tie-break list (`202`/`212`) or `--tie-breaks=` (`--standings` is the same) |
 
 `-g` and `-c` mirror JaVaFo's own RTG/FPC modes, used for FIDE's FE1
 endorsement auto-test.
@@ -410,9 +410,15 @@ reproduce from their seeds.
 `XXA`, `XXP`); nothing random depends on it, so one seed is one
 tournament either way.
 
-`--initial-colour` is Article 5.1's drawing of lots, and it is written into
-the file as `152`. It defaults to White - which is what the generator
-always used, implicitly, before the option existed.
+`--initial-colour` (or `--initial-color`, in every mode that takes it) is
+Article 5.1's drawing of lots, and it is written into the file as `152`.
+It defaults to White - which is what the generator always used,
+implicitly, before the option existed.
+
+The ratings take one of three shapes: `--ratings=2400,2350,...` gives each
+TPN's rating in order, `--rating-range=1400-2700` draws them from a range,
+and `--rating-top=2600 --rating-step=20` rates TPN 1 at 2600 and each next
+one 20 lower, with `--rating-sigma=50` adding normal noise of that size.
 
 `--rounds` is capped at `players - 1`, past which a Swiss has no legal
 opponents left. It can stop earlier still if some round turns out to have
@@ -857,6 +863,7 @@ written into the tournament name:
 | `--forfeit-pct --match-forfeit-pct` | boards forfeited; matches a team did not turn up for (board by board, or as a `330` with no boards) |
 | `--absent-team-pct --absent-player-pct` | teams sitting a round out (every player a `Z`; in a round robin the match is forfeited, `330`); players announced absent (the players below move up, a reserve fills in) |
 | `--out-of-order-pct` | lineups out of roster order, with a `300` record |
+| `--half-bye-team-pct` | (a Swiss only, default 0) teams taking a requested half-point bye, as a TRF26 `240 H` naming the team |
 | `--draw-rate --tie-breaks=MPTS,GPTS,EDE` | draws; a team tie-break list (`212`) and the ranks it gives |
 
 ```bash
