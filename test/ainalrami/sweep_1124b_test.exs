@@ -42,6 +42,19 @@ defmodule Ainalrami.Sweep1124bTest do
                    fn -> Trf.parse(text) end
     end
 
+    test "is let through when the caller asks by name (an importer that makes it a bye)" do
+      text =
+        fixture("round_paired_not_played.trf")
+        |> File.read!()
+        |> String.split("\n", trim: true)
+        |> Enum.reject(&String.starts_with?(&1, "001    4"))
+        |> Enum.join("\n")
+
+      parsed = Trf.parse(text, allow_missing_opponents: true)
+      p2 = Enum.find(parsed.players, &(&1[:rank] == 2))
+      assert hd(p2.games)[:opponent_rank] == 4
+    end
+
     test "and -p says so and exits 1" do
       dir = Path.join(System.tmp_dir!(), "ain4-2-#{System.unique_integer([:positive])}")
       File.mkdir_p!(dir)
