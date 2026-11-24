@@ -234,7 +234,7 @@ matching oracle: seeds 33001..39500, 16 rounds, 11-20 players, chunk 1000, gen 8
 ##### axis a seeds 33001-39500 end 2026-10-14T14:05:47
 ##### axis a seeds 39501-46000 start 2026-10-14T15:31:53
 matching oracle: seeds 39501..46000, 16 rounds, 11-20 players, chunk 1000, gen 8, solver procs 8
-** (File.Error) could not write to file "C:\\Users\\jorian\\AppData\\Local\\Temp/exh-matching-1122/chunk.tsv": no such file or directory
+** (File.Error) could not write to file "<home>\\AppData\\Local\\Temp/exh-matching-1122/chunk.tsv": no such file or directory
     (elixir 1.20.3) lib/file.ex:1494: File.write!/3
     tools/exhaustion_matching.exs:361: anonymous fn/10 in :elixir_compiler_2.__FILE__/1
     (elixir 1.20.3) lib/enum.ex:2622: Enum."-reduce/3-lists^foldl/2-0-"/3
@@ -268,13 +268,13 @@ matching oracle: seeds 39501..46000, 16 rounds, 11-20 players, chunk 1000, gen 8
     11:655  12:637  13:691  14:638  15:652  16:639  17:138  18:111
   positions by active-field size (refusal+control):
     11:7500  12:7224  13:9234  14:8432  15:9982  16:9721  17:10201  18:10722  19:10224  20:10224
-  ERROR 45597: could not write to file "C:\\Users\\jorian\\Desktop\\02cloud\\VPS projects\\ain-refusal-big\\tmp\\refusal_big\\tmpdir/ainalrami-bbp-640099/input.trf": no space 
+  ERROR 45597: could not write to file "<home>\\Desktop\\02cloud\\VPS projects\\ain-refusal-big\\tmp\\refusal_big\\tmpdir/ainalrami-bbp-640099/input.trf": no space 
 
   No disagreement. Every refusal is proved by two independent solvers.
 ##### axis a seeds 39501-46000 end 2026-10-14T16:07:09
 ##### axis a seeds 46001-51500 start 2026-10-14T16:07:19
 matching oracle: seeds 46001..51500, 16 rounds, 11-20 players, chunk 1000, gen 8, solver procs 8
-** (File.Error) could not write to file "C:\\Users\\jorian\\Desktop\\02cloud\\VPS projects\\ain-refusal-big\\tmp\\refusal_big\\tmpdir/exh-matching-5222/chunk.tsv": no space left on device
+** (File.Error) could not write to file "<home>\\Desktop\\02cloud\\VPS projects\\ain-refusal-big\\tmp\\refusal_big\\tmpdir/exh-matching-5222/chunk.tsv": no space left on device
     (elixir 1.20.3) lib/file.ex:1494: File.write!/3
     tools/exhaustion_matching.exs:361: anonymous fn/10 in :elixir_compiler_2.__FILE__/1
     (elixir 1.20.3) lib/enum.ex:2622: Enum."-reduce/3-lists^foldl/2-0-"/3

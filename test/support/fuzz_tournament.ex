@@ -60,7 +60,7 @@ defmodule Ainalrami.Test.FuzzTournament do
   #
   # Two things had to be checked against the real binary rather than argued
   # from the text alone, and both are grounded in a real TRF file (the
-  # 2026-08-30 Tonoli Memorial, `C:\Users\jorian\Downloads`) plus direct
+  # 2026-08-30 Tonoli Memorial, a local copy) plus direct
   # bbpPairings invocation from this repo:
   #
   # 1. **Missed rounds are `0000 - Z`, not a blank/absent column.** That

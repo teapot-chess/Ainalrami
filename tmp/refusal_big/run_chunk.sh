@@ -1,8 +1,8 @@
 #!/bin/bash
 # usage: run_chunk.sh AXIS FROM TO     (AXIS = a | h)
-cd "C:/Users/jorian/Desktop/02cloud/VPS projects/ain-refusal-big" || exit 1
+cd "$(dirname "$0")/../.." || exit 1
 export ELIXIR_ERL_OPTIONS="+S 8:8" MIX_ENV=test MATCH_GEN=8 MATCH_PY=8 MATCH_CHUNK=1000
-export BBPPAIRINGS_EXE="C:/Users/jorian/Desktop/02cloud/VPS projects/openpairings/priv/bbppairings/bbpPairings-windows.exe"
+export BBPPAIRINGS_EXE="${BBPPAIRINGS_EXE:?set BBPPAIRINGS_EXE to a bbpPairings binary}"
 export TMP="$PWD/tmp/refusal_big/tmpdir" TEMP="$PWD/tmp/refusal_big/tmpdir"
 axis=$1; from=$2; to=$3
 free_kb=$(df -k /c | tail -1 | awk '{print $4}')

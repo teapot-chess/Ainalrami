@@ -106,6 +106,9 @@ defmodule Ainalrami.CLI do
         1
     catch
       {:usage, message} -> usage_error(message)
+      # An ordinary failure found deep in a mode, where there is no exit
+      # code to hand back - see `write_file!/2`. Exit 1, and no help text.
+      {:fail, message} -> fail(message)
     end
   end
 
@@ -228,6 +231,18 @@ defmodule Ainalrami.CLI do
 
   defp bounded(value, key, minimum) do
     refuse("--#{key} must be at least #{minimum}, not #{value}")
+  end
+
+  # `--rounds=N`, held to the bounds `Trf.parse/1` holds `142` and `XXR` to,
+  # so `-g` never writes a file the other modes would refuse to read.
+  defp rounds_option(flags, minimum) do
+    case bounded(option(flags, "rounds"), "rounds", minimum) do
+      rounds when is_integer(rounds) and rounds > 999 ->
+        refuse("--rounds must be at most 999, not #{rounds}")
+
+      rounds ->
+        rounds
+    end
   end
 
   # A complaint from deep inside option parsing, where returning an exit code
@@ -385,6 +400,9 @@ defmodule Ainalrami.CLI do
     prefs = bye_preferences_option(flags)
 
     cond do
+      complaint = mode_complaint(positional, flags) ->
+        usage_error(complaint)
+
       prefs != [] and ("-g" in flags or "-c" in flags) ->
         usage_error(
           "the bye preferences (--bye-want, --bye-want-soft, --bye-avoid, " <>
@@ -617,6 +635,54 @@ defmodule Ainalrami.CLI do
 
   @mode_flags %{pair: "-p", explain: "-x", check: "-c", standings: "-s", generate: "-g"}
 
+  # How many file names each mode can use, and what they are.
+  @mode_files %{
+    generate: {1, "-g takes at most one file name, the output"},
+    pair: {2, "-p takes at most two file names, the input and the output"},
+    standings: {2, "-s takes at most two file names, the input and the output"},
+    check: {1, "-c takes one file name, the input"},
+    explain: {1, "-x takes one file name, the input"}
+  }
+
+  # Two modes at once, or more file names than the mode has a use for.
+  #
+  # Both used to be settled by whoever came first and said nothing.
+  # `ainalrami -p -c in.trf` paired, because the `cond` in `dispatch/2`
+  # happens to ask about `-p` before `-c`. And `ainalrami in.trf -g out.trf`
+  # generated a tournament straight over `in.trf` - `-g`'s output is its
+  # FIRST file name - ignored `out.trf`, and exited 0. The rename that makes
+  # the write atomic made the loss thorough, too. Every other mode dropped
+  # spare names the same way, so a stray argument was always somebody's
+  # mistake and never anybody's problem.
+  defp mode_complaint(positional, flags) do
+    modes =
+      flags
+      |> Enum.flat_map(fn
+        "-g" -> [:generate]
+        "-p" -> [:pair]
+        "-c" -> [:check]
+        flag when flag in ["-x", "--explain"] -> [:explain]
+        flag when flag in ["-s", "--standings"] -> [:standings]
+        _ -> []
+      end)
+      |> Enum.uniq()
+
+    case modes do
+      [mode] ->
+        {most, what} = @mode_files[mode]
+
+        if length(positional) > most do
+          "#{what} - got #{length(positional)}: #{Enum.join(positional, " ")}"
+        end
+
+      [_, _ | _] ->
+        "one mode at a time, not #{Enum.map_join(modes, " and ", &@mode_flags[&1])}"
+
+      [] ->
+        nil
+    end
+  end
+
   # The flags that mean something in some modes and nothing in the others.
   # Refused in the others, not ignored: a run that drops an option without a
   # word is the failure this file's first comment is about.
@@ -705,7 +771,7 @@ defmodule Ainalrami.CLI do
   # place of the file's `142`/`XXR` - `:expected_rounds`, which the last
   # round's colour rules key off.
   defp with_rounds_flag(parsed, flags) do
-    case bounded(option(flags, "rounds"), "rounds", 1) do
+    case rounds_option(flags, 1) do
       nil -> parsed
       rounds -> put_in(parsed.tournament[:number_of_rounds], rounds)
     end
@@ -1645,7 +1711,7 @@ defmodule Ainalrami.CLI do
         # "unexpected error". The two agree on the bounds on purpose: a
         # roster of at least one, and a round count of at least none.
         players: bounded(option(flags, "players"), "players", 1),
-        rounds: bounded(option(flags, "rounds"), "rounds", 0),
+        rounds: rounds_option(flags, 0),
         forfeit_pct: option(flags, "forfeit-pct"),
         requested_bye_pct: option(flags, "bye-pct"),
         forbidden_pct: option(flags, "forbidden-pct"),
@@ -1746,7 +1812,7 @@ defmodule Ainalrami.CLI do
             system: team_system_option(flags),
             seed: option(flags, "seed"),
             teams: bounded(option(flags, "teams"), "teams", 2),
-            rounds: bounded(option(flags, "rounds"), "rounds", 0),
+            rounds: rounds_option(flags, 0),
             boards: bounded(option(flags, "boards"), "boards", 1),
             reserves: bounded(option(flags, "reserves"), "reserves", 0),
             cycles: bounded(option(flags, "cycles"), "cycles", 1),
@@ -2498,7 +2564,7 @@ defmodule Ainalrami.CLI do
           [
             seed: option(flags, "seed"),
             players: bounded(option(flags, "players"), "players", 2),
-            rounds: bounded(option(flags, "rounds"), "rounds", 0),
+            rounds: rounds_option(flags, 0),
             cycles: bounded(option(flags, "cycles"), "cycles", 1),
             forfeit_pct: bounded_pct(option(flags, "forfeit-pct"), "forfeit-pct"),
             draw_rate: fraction_option(flags, "draw-rate"),
@@ -2841,7 +2907,11 @@ Round #{round_number} - #{boards} board#{plural(boards)} over " <>
   defp open_proof(path) do
     modes = [:write, :binary] ++ if(String.ends_with?(path, ".gz"), do: [:compressed], else: [])
     Process.put(:ainalrami_cli_proof_rounds, 0)
-    File.open!(path, modes)
+
+    case File.open(path, modes) do
+      {:ok, file} -> file
+      {:error, reason} -> throw({:fail, "could not write #{path}: #{:file.format_error(reason)}"})
+    end
   end
 
   defp write_proof_line(file, line) do
@@ -3754,15 +3824,16 @@ Round #{round_number} - #{boards} board#{plural(boards)} over " <>
     end)
   end
 
-  # An entry holding nothing at all - no opponent, no colour, no result.
-  # `parse_games/1` keeps these for interior rounds a late entrant missed,
-  # and they are evidence of nothing.
+  # The last round a player's line says anything at all about.
   defp last_mentioned(player) do
     player.games
     |> Enum.with_index(1)
     |> Enum.reduce(0, fn {game, round}, last -> if blank?(game), do: last, else: round end)
   end
 
+  # An entry holding nothing at all - no opponent, no colour, no result.
+  # `parse_games/1` keeps these for interior rounds a late entrant missed,
+  # and they are evidence of nothing.
   defp blank?(game) do
     is_nil(game.opponent_rank) and is_nil(game.colour) and
       (is_nil(game.result) or String.trim(game.result) == "")
@@ -3848,26 +3919,23 @@ Round #{round_number} - #{boards} board#{plural(boards)} over " <>
   # half-written one. Same directory on purpose: `File.rename/2` is only
   # atomic within a filesystem, and `System.tmp_dir!/0` is routinely on
   # another one.
+  #
+  # A write that fails is the caller's ordinary bad luck - a directory that
+  # is not there, a full disk, a file somebody else holds open - and is
+  # reported as such, under the name the caller gave. It used to reach the
+  # backstop as an "unexpected error" naming the temp file, the one path in
+  # the whole story the caller never typed.
   defp write_file!(output_path, text) do
     temp_path = "#{output_path}.#{System.unique_integer([:positive])}.tmp"
 
-    try do
-      File.write!(temp_path, text)
-
-      case File.rename(temp_path, output_path) do
-        :ok ->
-          :ok
-
-        {:error, reason} ->
-          raise File.Error, reason: reason, action: "write to file", path: output_path
-      end
-    rescue
-      e ->
+    with :ok <- File.write(temp_path, text),
+         :ok <- File.rename(temp_path, output_path) do
+      Log.detail("wrote #{output_path}")
+    else
+      {:error, reason} ->
         File.rm(temp_path)
-        reraise e, __STACKTRACE__
+        throw({:fail, "could not write #{output_path}: #{:file.format_error(reason)}"})
     end
-
-    Log.detail("wrote #{output_path}")
   end
 
   defp board_description(white, nil), do: "##{white} - pairing-allocated bye"
@@ -3893,8 +3961,20 @@ Round #{round_number} - #{boards} board#{plural(boards)} over " <>
     end
   end
 
+  # A file with no `001` line is not a tournament with nobody in it. It is
+  # an empty file, a binary, a spreadsheet saved under the wrong name -
+  # and `-p` used to pair it, as a round of no boards, and write `0` with
+  # exit 0, which reads exactly like a successful run to anything driving
+  # this program from a script.
   defp parse_input(text, flags) do
-    {:ok, text |> Trf.parse() |> with_input_flags(flags)}
+    case Trf.parse(text) do
+      %{players: []} ->
+        Log.error("invalid TRF file: no player records (001 lines) - is this a TRF file?")
+        {:error, :halt}
+
+      parsed ->
+        {:ok, with_input_flags(parsed, flags)}
+    end
   rescue
     e in Trf.ValidationError ->
       Log.error("invalid TRF file: #{Exception.message(e)}")
@@ -3920,6 +4000,11 @@ Round #{round_number} - #{boards} board#{plural(boards)} over " <>
   defp usage_error(message) do
     Log.error(message)
     print_help()
+    1
+  end
+
+  defp fail(message) do
+    Log.error(message)
     1
   end
 

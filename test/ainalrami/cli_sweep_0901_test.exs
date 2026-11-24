@@ -104,6 +104,11 @@ defmodule Ainalrami.CliSweep0901Test do
       # unexpected raise from below `run/1` comes back as an exit code. A
       # directory handed in where a file is expected is the cheapest such
       # raise: `File.write!` on it raises `File.Error`.
+      #
+      # Was the cheapest. Since sweep 2026-11b (AIN4-7) a write that fails is
+      # an ordinary error with the output's name, which is what the backstop
+      # was standing in for; the contract - exit 1, a message, no trace - is
+      # the same either way.
       input = write_260_file!()
       output = tmp_path("_dir")
       File.mkdir_p!(output)
@@ -112,7 +117,7 @@ defmodule Ainalrami.CliSweep0901Test do
       {code, _out, err} = run([input, "-p", output])
 
       assert code == 1
-      assert err =~ "unexpected error"
+      assert err =~ "could not write #{output}"
       refute err =~ "** (File.Error)"
     end
   end

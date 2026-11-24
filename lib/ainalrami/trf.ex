@@ -2602,6 +2602,7 @@ defmodule Ainalrami.Trf do
     # The two hot record types are accumulated in reverse (see the reduce
     # above); every other key keeps file order as it always did.
     result = %{result | players: Enum.reverse(result.players), teams: Enum.reverse(result.teams)}
+    check_unique_ranks!(result.players, lines)
 
     result =
       Enum.reduce([:forfeited_matches, :board_orders], result, fn key, result ->
@@ -2842,6 +2843,7 @@ defmodule Ainalrami.Trf do
   defp parse_xxr(acc, line) do
     case line |> String.slice(3..-1//1) |> String.trim() |> Integer.parse() do
       {rounds, _rest} ->
+        round_count!(rounds, line)
         check_round_count_agreement!(acc.tournament[:number_of_rounds], rounds)
         update_in(acc.tournament, fn t -> Map.put_new(t, :number_of_rounds, rounds) end)
 
@@ -2869,6 +2871,23 @@ defmodule Ainalrami.Trf do
   # last-round rules to the wrong round - with nothing downstream able to
   # tell. A self-contradictory file has no correct pairing, only two
   # plausible ones.
+  # The round count read from `142` or `XXR`, kept to something a
+  # tournament could be. A negative one reached the engine's own argument
+  # check as an "unexpected error", and under `--acceleration=baku` a
+  # FunctionClauseError; `XXR 1000000` was accepted, and everything sized by
+  # the round count was sized by it, in time and memory both. Nought stays:
+  # `-g --rounds=0` writes it, for a roster nobody has paired yet. 999 is a
+  # double round robin of 500 players, which is further than anyone has
+  # needed to go.
+  @max_round_count 999
+
+  defp round_count!(rounds, _line) when rounds in 0..@max_round_count, do: rounds
+
+  defp round_count!(rounds, line) do
+    raise ValidationError,
+          "the round count must be 0..#{@max_round_count}, got #{rounds}: #{String.trim(line)}"
+  end
+
   defp check_round_count_agreement!(nil, _rounds), do: :ok
   defp check_round_count_agreement!(same, same), do: :ok
 
@@ -4036,6 +4055,7 @@ defmodule Ainalrami.Trf do
             acc
 
           rounds ->
+            round_count!(rounds, line)
             check_round_count_agreement!(acc.tournament[:number_of_rounds], rounds)
             put_in(acc.tournament[:number_of_rounds], rounds)
         end
@@ -4080,6 +4100,32 @@ defmodule Ainalrami.Trf do
       final_rank: parse_int(read(line, @player_cols.rank)),
       games: parse_games(line)
     }
+  end
+
+  # Two `001` lines with one starting rank. The rank is the player's
+  # identity everywhere a TRF refers to anyone, so the second line is not a
+  # second player, it is a contradiction. It used to be read without a
+  # word: pairing then stopped at the engine's own backstop ("unexpected
+  # error"), `-s` quietly kept one of the two, and two copies with different
+  # games set off the mutual-reference check, which blamed the games rather
+  # than the roster. Refused here, at the line that repeats a rank.
+  defp check_unique_ranks!(players, lines) do
+    if length(Enum.uniq_by(players, & &1.rank)) != length(players) do
+      line =
+        lines
+        |> Enum.filter(&String.starts_with?(&1, "001"))
+        |> Enum.reduce_while(MapSet.new(), fn line, seen ->
+          rank = starting_rank!(line)
+          if rank in seen, do: {:halt, line}, else: {:cont, MapSet.put(seen, rank)}
+        end)
+
+      raise ValidationError,
+        message:
+          "001: duplicate starting rank #{starting_rank!(line)} - two players cannot share one: " <>
+            String.trim(line)
+    end
+
+    :ok
   end
 
   # TRF's starting rank is four columns, 1..9999. `0` is the bye marker of
