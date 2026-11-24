@@ -525,7 +525,12 @@ what moves is the unequal one (say 2-1 on three boards, all by forfeit),
 which used to be a forfeit win and loss and now counts as played for the
 individual-view codes - Article 16's unplayed-round handling in BH, SB and
 their kin, DE, and codes that count games or wins played - while
-board-level codes, which read the boards, do not change.
+board-level codes, which read the boards, do not change. The independent
+reference (`test/support/tiebreak_reference/reference.ex`) was not moved
+with it until 0.59.3, when seed 1042637 of the scale run met such a match
+(team 13 against 16, round 6: 1-2 on three forfeits) and the two disagreed
+on BH:MP, 39 (played) against 37 (forfeit loss, the dummy on the team's
+own score).
 
 **Reading T9 - boards that meet crosswise.** Article 12 numbers boards as a
 team match does, board k against board k. In a Scheveningen or a

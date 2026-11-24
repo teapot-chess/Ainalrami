@@ -66,6 +66,10 @@ with the reference on every one of them.
 
 ## [Unreleased]
 
+## [0.59.3] - 2026-11-24
+
+- [Fix] **The tie-break reference learns what the engine was taught on 2026-11-11.** Since 0.56.0 a team match with no game played, where both sides scored on a board by forfeit, is a played match: both teams turned up, so it is won on game points like any other. The engine, the pairing references and the generators were all told. The independent tie-break reference was not, and kept calling an unequal one (2-1 on three forfeits) a forfeit win and loss. Seed 1042637 of the scale run finally produced one - team 13 lost 1-2 to team 16 in round 6 with nobody touching a piece - and the reference gave team 13 a dummy opponent on its own score where the engine gave it team 16: BH:MP 37 against 39, and eighteen other codes (SB, FB, AOB, REP and kin) falling over in sympathy. The engine was right by our own settled reading; the reference was right by a reading we retired two weeks ago. It has been brought up to date, with a hand-built three-board event of exactly this shape as the regression test. Pairings and the engine's tie-breaks are untouched; only the instrument was wrong, which is the one that is supposed to be.
+
 ## [0.59.2] - 2026-11-24
 
 - [Fix] **`-g` writes where it was told to, or nowhere.** `ainalrami input.trf -g out.trf` took its first file name as the output, generated a tournament straight over `input.trf`, ignored `out.trf`, and exited 0 - atomically, so not even a half-written file was left to hint at what happened. Every other mode dropped spare file names just as quietly. Now a mode given more file names than it uses refuses (`-g` one, `-c` and `-x` one, `-p` and `-s` two) and names them.
