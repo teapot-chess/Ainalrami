@@ -34,9 +34,11 @@ defmodule Ainalrami.Trf do
   Both `serialize/1` and `parse/1` validate every player's per-round result
   codes before returning, raising `Ainalrami.Trf.ValidationError` on an
   unrecognized code or an illegal combination between two opponents (see
-  `validate_games!/2`). Validation only cross-checks a pairing when both
+  `validate_games!/2`). `serialize/1` only cross-checks a pairing when both
   sides are present in the given player set and mutually reference each
-  other for that round - a lone/dangling reference is not itself an error.
+  other for that round - it may be handed a partial roster. `parse/1` has
+  the whole file, so it also refuses an opponent number that no `001` line
+  carries, and a reference the opponent does not return.
 
   Ported from the sibling project (`teapot-chess/openpairings`)'s own
   `PairingsEngine.Trf`, which fixed two real bugs against FIDE's actual
@@ -2282,8 +2284,9 @@ defmodule Ainalrami.Trf do
   #      for that round is resolvable in `players` *and* mutually references
   #      this player back, the two codes must be a legal pair (see
   #      `@legal_result_pairs`). An unresolvable/dangling opponent reference
-  #      is not itself flagged - the caller may be validating a partial
-  #      roster.
+  #      is not itself flagged by `serialize/1` - the caller may be
+  #      validating a partial roster. `parse/1` (`require_mutual`) refuses
+  #      it, see `check_opponent_exists!/4`.
   #
   # `opts[:allow_dangling_playing_code]` relaxes the "opponent 0000 needs a
   # bye code (F/H/Z/U)" rule below - those four codes didn't exist before
@@ -2307,10 +2310,37 @@ defmodule Ainalrami.Trf do
 
     for player <- players,
         {game, round} <- Enum.with_index(player[:games] || [], 1) do
+      if opts[:require_mutual], do: check_opponent_exists!(player, round, game, by_rank)
       validate_game!(player, round, game, by_rank, opts)
     end
 
     :ok
+  end
+
+  # `parse/1` holds the whole roster, so an opponent number with no `001`
+  # line behind it is not a partial roster, it is a typo or a truncated
+  # file. It used to be let through, and then Dutch paired around the
+  # phantom, Dubov crashed on it and BH/SB/ARO summed a player who does not
+  # exist. Checked whatever the result, blank included: a pending pairing
+  # against nobody is no better than a finished one.
+  defp check_opponent_exists!(player, round, game, by_rank) do
+    case game[:opponent_rank] do
+      nil ->
+        :ok
+
+      # `   0`, right-aligned rather than `0000`: nobody, as bbpPairings
+      # reads the field - a number. A bye, not a reference.
+      0 ->
+        :ok
+
+      opp_rank ->
+        unless Map.has_key?(by_rank, opp_rank) do
+          raise ValidationError,
+            message:
+              "001 line for starting rank #{player[:rank]} (#{player_label(player)}), round #{round}: " <>
+                "opponent #{opp_rank} has no 001 line - no player has starting rank #{opp_rank}"
+        end
+    end
   end
 
   defp validate_game!(_player, _round, %{result: result}, _by_rank, _opts)
@@ -2353,7 +2383,8 @@ defmodule Ainalrami.Trf do
   # `parse/1` always holds the whole roster, so an opponent that resolves to a
   # real player whose own line for that round names someone else (or nobody)
   # is a history that cannot be true: two players cannot both have beaten the
-  # same third one. A reference to a rank not in the file stays tolerated.
+  # same third one. A reference to a rank not in the file never gets here:
+  # `check_opponent_exists!/4` refused it first.
   defp check_mutual!(player, round, game, by_rank) do
     with opp_rank when not is_nil(opp_rank) <- game[:opponent_rank],
          opponent when not is_nil(opponent) <- Map.get(by_rank, opp_rank) do
@@ -4159,9 +4190,9 @@ defmodule Ainalrami.Trf do
   # truncated inside the opponent field contribute a round anyway, and
   # `read/2` on a short line returned the digits that were there: opponent
   # 2034 cut at column 93 read as 20, cut at 92 as 2. Either is a
-  # different real player, or a dangling reference `validate_games!/2`
-  # documents as not an error - a wrong pairing history from a wrong file,
-  # with nothing to say so.
+  # different real player (a dangling one is refused now, the real one
+  # never can be) - a wrong pairing history from a wrong file, with
+  # nothing to say so.
   #
   # A partial TRAILING block is IGNORED rather than fatal, matching
   # bbpPairings' reader, whose loop condition (`startIndex <= line.size() -

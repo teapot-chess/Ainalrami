@@ -21,6 +21,25 @@ defmodule Ainalrami.TrfSweep0901Test do
     end)
   end
 
+  # A row whose round 1 is a whole `   2 w 1` block, followed by player 2's
+  # own line for that game, so every opponent number `Trf.parse/1` reads
+  # has a 001 line behind it.
+  defp with_partner(line) do
+    partner =
+      row([
+        {1, "001"},
+        {5, "   2"},
+        {15, "Partner"},
+        {81, " 0.0"},
+        {86, "   2"},
+        {92, "   1"},
+        {97, "b"},
+        {99, "0"}
+      ])
+
+    line <> "\n" <> partner <> "\n"
+  end
+
   defp player_row(name, extra \\ []) do
     row(
       [
@@ -50,7 +69,7 @@ defmodule Ainalrami.TrfSweep0901Test do
       assert byte_size(line) == 99
       assert String.length(line) == 98
 
-      %{players: [p]} = Trf.parse(line <> "\n")
+      %{players: [p, _partner]} = Trf.parse(with_partner(line))
 
       assert p.name == name
       assert p.fide_rating == 2200
@@ -166,7 +185,7 @@ defmodule Ainalrami.TrfSweep0901Test do
     test "a complete block is one round", %{full: full} do
       assert byte_size(full) == 99
 
-      assert Trf.parse(full).players |> hd() |> Map.fetch!(:games) == [
+      assert Trf.parse(with_partner(full)).players |> hd() |> Map.fetch!(:games) == [
                %{opponent_rank: 2, colour: "w", result: "1"}
              ]
     end
@@ -185,7 +204,7 @@ defmodule Ainalrami.TrfSweep0901Test do
       two = full <> "  " <> "   3" <> " " <> "b"
       assert byte_size(two) == 107
 
-      assert Trf.parse(two).players |> hd() |> Map.fetch!(:games) == [
+      assert Trf.parse(with_partner(two)).players |> hd() |> Map.fetch!(:games) == [
                %{opponent_rank: 2, colour: "w", result: "1"}
              ]
     end
