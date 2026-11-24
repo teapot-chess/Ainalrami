@@ -2310,7 +2310,9 @@ defmodule Ainalrami.Trf do
 
     for player <- players,
         {game, round} <- Enum.with_index(player[:games] || [], 1) do
-      if opts[:require_mutual], do: check_opponent_exists!(player, round, game, by_rank)
+      if opts[:require_mutual] && !opts[:allow_missing_opponents],
+        do: check_opponent_exists!(player, round, game, by_rank)
+
       validate_game!(player, round, game, by_rank, opts)
     end
 
@@ -2490,8 +2492,13 @@ defmodule Ainalrami.Trf do
   16-18; `300` round 5-7, team 9-11, opponent 13-15, then the starting
   ranks in board order, 4 columns from 17 every 5; `352` the sequence
   from column 5. `serialize/2` writes all six back.
+
+  Options: `allow_missing_opponents: true` lets a game against a starting
+  rank that has no `001` line through, as before 0.60.0 - for an importer
+  that turns such a game into a bye itself (TRF06-vintage files wrote a bye
+  that way) and says so. Pairing, checking and tie-breaks never pass it.
   """
-  def parse(text) do
+  def parse(text, opts \\ []) do
     lines =
       text
       # A UTF-8 byte-order mark, dropped ONCE before anything else looks at
@@ -2655,7 +2662,8 @@ defmodule Ainalrami.Trf do
     validate_games!(result.players,
       allow_dangling_playing_code: true,
       allow_unknown_result: true,
-      require_mutual: true
+      require_mutual: true,
+      allow_missing_opponents: Keyword.get(opts, :allow_missing_opponents, false)
     )
 
     # The round about to be paired, counted once for both of the records

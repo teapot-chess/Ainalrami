@@ -66,6 +66,10 @@ with the reference on every one of them.
 
 ## [Unreleased]
 
+## [0.60.1] - 2026-11-24
+
+- [Fix] **`Trf.parse/2` takes `allow_missing_opponents: true`.** 0.60.0 refused a game against a rank with no `001` line everywhere, which was right for pairing and wrong for one caller: OpenPairings' importer, which reads TRF06-vintage files that wrote a bye as a win against nobody and turns that into a bye on purpose, with a note to the arbiter. It now asks for the old tolerance by name. The CLI, the checkers and the tie-breaks never pass it, so everything 0.60.0 refuses it still refuses.
+
 ## [0.60.0] - 2026-11-24
 
 - [Change] **An opponent with no `001` line is refused by the reader.** `Trf.parse/1` let a game against a starting rank nobody had through on purpose, on the theory that the caller might hold a partial roster. It never does: it holds the file. So Dutch paired around a phantom, Dubov crashed on it, and BH, SB and ARO summed the score of a player who does not exist. Now `invalid TRF file: 001 line for starting rank 7 (Name), round 3: opponent 41 has no 001 line`, exit 1, blank results included - a pending pairing against nobody is no better than a finished one. `Trf.serialize/1` still takes a partial roster, because there someone might actually mean it. Files that pair today and carry no such reference pair exactly as before; files that carry one stop pairing, which is the point.
