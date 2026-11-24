@@ -66,6 +66,8 @@ with the reference on every one of them.
 
 ## [Unreleased]
 
+- [Change] **`.gitattributes` says what is binary, and what is not.** `* text=auto eol=lf`, so a Windows checkout stops handing the tests CRLF, plus an explicit binary list (images, archives, fonts, databases) so nothing clever happens to them and `*.cmd`/`*.bat`/`*.ps1` keep the CRLF a command interpreter insists on. The interop fixtures stay `-text`, as before.
+
 ## [0.59.1] - 2026-11-23
 
 - [Fix] **`-c` on a file with no round count treats its last round as the last round.** With no `142` and no `XXR`, the checker paired the final round as though another were coming and skipped the last round's colour rules, so it disagreed with any generator that knew the tournament was over. bbpPairings' generator writes exactly such files, and its own checker reads the rounds present as the whole tournament. The FE1 run on 0.59.0 found 90 such last rounds in 5,000 tournaments, all of them the checker's mistake, not the pairing's. Now the rounds the file mentions are the tournament, a bye entered ahead for an unpaired round included, and `--rounds=N` still overrides.

@@ -1,7 +1,7 @@
 # Normalize all text to LF in the repository AND in working copies for the
 # file types the toolchain cares about: `mix format` writes LF and its
 # --check-formatted flag flags CRLF files as unformatted.
-* text=auto
+* text=auto eol=lf
 
 *.ex text eol=lf
 *.exs text eol=lf
@@ -17,3 +17,34 @@
 # shape this engine could not read until 2026-08-18. Normalising it to LF
 # would leave a fixture that passes for the wrong reason.
 test/fixtures/interop/** -text
+
+# Binary: never touched by line-ending conversion or text diffs.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.webp binary
+*.ico binary
+*.icns binary
+*.pdf binary
+*.zip binary
+*.gz binary
+*.xz binary
+*.tar binary
+*.tgz binary
+*.7z binary
+*.jar binary
+*.woff binary
+*.woff2 binary
+*.ttf binary
+*.otf binary
+*.eot binary
+*.db binary
+*.sqlite3 binary
+*.img binary
+*.pgm binary
+
+# cmd reads a batch file with LF endings until the day it does not.
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.ps1 text eol=crlf
