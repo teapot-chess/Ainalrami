@@ -456,6 +456,82 @@ defmodule Ainalrami.TiebreakReferenceTest do
     end
   end
 
+  # Four teams of three boards, two rounds. Round 1: One and Two forfeit
+  # crosswise - One scores boards 1 and 2 by forfeit, Two board 3 - with no
+  # game played; Three beats Four 2-1 over the board. Round 2: One and Three
+  # draw 1.5-1.5, Two beats Four 2-1.
+  defp crosswise_forfeit_trf do
+    g = fn opp, colour, result -> %{opponent_rank: opp, colour: colour, result: result} end
+
+    players = [
+      {1, [g.(4, "w", "+"), g.(7, "w", "=")]},
+      {2, [g.(5, "b", "+"), g.(8, "b", "=")]},
+      {3, [g.(6, "w", "-"), g.(9, "w", "=")]},
+      {4, [g.(1, "b", "-"), g.(10, "w", "1")]},
+      {5, [g.(2, "w", "-"), g.(11, "b", "1")]},
+      {6, [g.(3, "b", "+"), g.(12, "w", "0")]},
+      {7, [g.(10, "w", "1"), g.(1, "b", "=")]},
+      {8, [g.(11, "b", "1"), g.(2, "w", "=")]},
+      {9, [g.(12, "w", "0"), g.(3, "b", "=")]},
+      {10, [g.(7, "b", "0"), g.(4, "b", "0")]},
+      {11, [g.(8, "w", "0"), g.(5, "w", "0")]},
+      {12, [g.(9, "b", "1"), g.(6, "b", "1")]}
+    ]
+
+    Ainalrami.Trf.serialize(%{
+      tournament: %{name: "crosswise forfeits", type: "swiss", number_of_rounds: 2},
+      players:
+        for(
+          {rank, games} <- players,
+          do: %{rank: rank, name: "P#{rank}", points: 0.0, games: games}
+        ),
+      teams: [
+        %{name: "One", player_ranks: [1, 2, 3]},
+        %{name: "Two", player_ranks: [4, 5, 6]},
+        %{name: "Three", player_ranks: [7, 8, 9]},
+        %{name: "Four", player_ranks: [10, 11, 12]}
+      ]
+    })
+    |> Ainalrami.Trf.parse()
+  end
+
+  test "a match forfeited crosswise, 2-1 with no game played, is a played match for both (seed 1042637)" do
+    # Both teams turned up, so round 1 is a played match One won on game
+    # points (reading C of 2026-11-11, T8), and Article 16 has nothing to
+    # adjust: One's BH:MP is Two's 2 + Three's 3 = 5, Two's is One's 3 +
+    # Four's 0 = 3. The reference used to call it a forfeit win and loss -
+    # a dummy on the team's own score, 6 and 2 - and seed 1042637 of the
+    # scale run tripped over exactly that (team 13, BH:MP 39 against 37).
+    trf = crosswise_forfeit_trf()
+    event = Team.from_trf(trf)
+    assert event.teams[1].rounds[1].kind == :played
+    assert event.teams[2].rounds[1].kind == :played
+
+    {:ok, engine} = Tiebreaks.compute(event, ~w(MPTS BH:MP REP))
+    reference = Ref.from_team_trf(trf, [])
+
+    for {code, expected} <- [
+          {"MPTS", %{1 => 3.0, 2 => 2.0, 3 => 3.0, 4 => 0.0}},
+          {"BH:MP", %{1 => 5.0, 2 => 3.0}},
+          {"REP", %{1 => 2, 2 => 2}}
+        ],
+        {id, value} <- expected do
+      assert engine[code][id] == value, "engine #{code} of #{id}"
+      assert Ref.values(reference, code)[id] == value, "reference #{code} of #{id}"
+    end
+
+    result =
+      Proof.compare_team_trf(
+        trf,
+        ~w(MPTS GPTS BH:MP BH:GP BH:MP/C1 FB:MP AOB:MP SB:MP SB:GP EMGSB EGGSB WIN:MP WON:GP REP SSSC),
+        [~w(MPTS GPTS EDE BH:MP EMGSB), ~w(MPTS BC TBR BBE)],
+        "crosswise"
+      )
+
+    assert result.bad == [], Enum.join(result.bad, "\n")
+    assert Proof.team_trf(1_042_637).bad == []
+  end
+
   test "team events built match by match, with rematches and every unplayed round" do
     # The first five match-by-match events with both a rematch and a
     # forfeited match.

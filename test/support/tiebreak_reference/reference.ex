@@ -279,9 +279,11 @@ defmodule Ainalrami.TiebreakReference do
       points, else a win's), otherwise a zero-point bye;
     * a match where some board was played over the board is won by the
       side with more game points and drawn when level; a match where none
-      was (every board forfeited) is a forfeited match - lost by the side
-      with fewer game points, both sides lost when neither scored, drawn
-      when level on something (reading T8);
+      was (every board forfeited) is played all the same when both sides
+      scored on a board - both turned up - and won, drawn or lost on game
+      points; when only one side scored it is a forfeited match lost by the
+      other, and both sides lost it when neither scored (reading T8, as
+      changed on 2026-11-11);
     * a `330` record forfeits a match neither team has games for, the
       winner taking a win on every board in game points;
     * match points from the `362` record (win, draw, loss, `A`/`Z` for a
@@ -410,16 +412,19 @@ defmodule Ainalrami.TiebreakReference do
 
         %{kind: kind} when kind in [:played, :unplayed] ->
           theirs = raw[{m.opponent, r}].gp
+          # No game over the board, but both sides scored by forfeit: both
+          # turned up, so the match was played (reading C of 2026-11-11,
+          # T8), and it is won on game points like any other - a 2-1 on
+          # forfeits too, not only the level one.
+          played? = kind == :played or (m.gp > 0.0 and theirs > 0.0)
 
           {kind, pts} =
             cond do
-              kind == :played and m.gp > theirs -> {:played, mp.win}
-              kind == :played and m.gp < theirs -> {:played, mp.loss}
-              kind == :played -> {:played, mp.draw}
+              played? and m.gp > theirs -> {:played, mp.win}
+              played? and m.gp < theirs -> {:played, mp.loss}
+              played? -> {:played, mp.draw}
               m.gp > theirs -> {:forfeit_win, mp.win}
-              m.gp < theirs -> {:forfeit_loss, forfeit_mp}
-              m.gp == 0.0 -> {:forfeit_loss, forfeit_mp}
-              true -> {:played, mp.draw}
+              true -> {:forfeit_loss, forfeit_mp}
             end
 
           %{m | kind: kind} |> Map.put(:mp, pts)
