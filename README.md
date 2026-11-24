@@ -375,6 +375,11 @@ ainalrami input.trf -p output.trf
 `-g` and `-c` mirror JaVaFo's own RTG/FPC modes, used for FIDE's FE1
 endorsement auto-test.
 
+`-p` pairs the round after the last one the file has paired, and refuses
+(exit 1, `round N has no results yet`) while every board of that round is
+still blank: a round paired but not played is not history, and pairing the
+next one would seat the same boards again. One result entered is enough.
+
 **`-g`** generates a random tournament and plays it forward, pairing every
 round with this engine. Every run is reproducible from its seed, and the
 seed is written into the generated file's tournament name, so a file
@@ -559,7 +564,7 @@ to the library's for each one. A flag is laid over what the file says:
 
 | flag | library | what |
 |---|---|---|
-| `--rounds=N` | `expected_rounds:` | the round count, in place of `142`/`XXR`. Without either, `-c` takes the rounds the file mentions as the whole tournament, as bbpPairings' checker does |
+| `--rounds=N` | `expected_rounds:` | the round count, in place of `142`/`XXR`. Without either, `-c` takes the rounds the file mentions as the whole tournament, as bbpPairings' checker does - for every system, Dubov, Burstein and Lim included |
 | `--initial-colour=white\|black` | `initial_colour:` | the drawing of lots, in place of `152`/`XXC` |
 | `--points=3,1,0` or `--points=win:3,draw:1,bye:1` | `point_system:` | the point system, over `BB*`/`162`; names `win draw loss bye forfeit-loss zero-bye half-bye full-bye forfeit-win unknown` (`unknown` is what a `?` result is worth, `162`'s `X`; without it, and without an `X` in the file, a `?` is worth a draw). A win's value moves the bye's with it unless `bye:` is given, as `BBW` does, and the players' totals are re-added under it |
 | `--forbidden=1,4/2,9,12@3-5` | `forbidden_pairs:` | forbidden groups, added to the file's `XXP`/`260`; `@ROUND` or `@FIRST-LAST` limits one to those rounds |
@@ -656,7 +661,8 @@ replayed (`-c`) by C.04.4.1, the 2026 edition (`Ainalrami.Dubov`);
 exits 2 rather than either quietly winning.
 
 What Dubov needs that Dutch does not: the round count (`142`/`XXR` or
-`--rounds`; [C8]-[C10] stop in the last round) and a rating for every
+`--rounds`; [C8]-[C10] stop in the last round; `-c` without one takes the
+rounds the file holds as the tournament) and a rating for every
 player (1.1.1) - an unrated one takes a provisional rating from `XXO
 provisional-rating` or `--provisional-rating=`, and a round with an unrated
 player and neither is refused. Baku is the virtual points the file carries
@@ -686,7 +692,8 @@ Dutch system, so the Dutch engine pairs them, unchanged; `-p` says so.
 After them the index is Buchholz, then Sonneborn-Berger, then the pairing
 number - never the score, never a rating.
 
-So the round count is required (`142`/`XXR` or `--rounds`), and
+So the round count is required (`142`/`XXR` or `--rounds`; `-c` without
+one takes the rounds the file holds as the tournament), and
 `--provisional-rating` is refused: Burstein reads no ratings. Forbidden
 pairs, pre-recorded byes, late entrants, Baku, the point system and the
 initial colour work as for Dutch; with no `152` the initial colour is read
@@ -710,7 +717,8 @@ other `192` exits 2.
 The scoregroups above the median are paired top down, those below it bottom
 up, the median group last; floaters, exchanges and colours follow Articles
 3-5. The round count is required (the last round lets equal scores meet
-whatever their colours, Article 6). Ratings are not read, so
+whatever their colours, Article 6); `-c` without one takes the rounds the
+file holds as the tournament. Ratings are not read, so
 `--provisional-rating` is refused; so is an acceleration, which Lim does not
 have, and the Maxi-tournament rules, which no 2026 text defines. Forbidden
 pairs, pre-recorded byes, late entrants, the point system and the initial
@@ -946,6 +954,11 @@ command line `--zero-bye=` says the same.
 
 Any other `XX` line is accepted and ignored, with a warning on stderr
 naming it - an unread rule should at least be an announced one.
+
+An opponent number no `001` line carries is refused, naming the line, the
+round and the rank - a truncated file or a typo, which Dutch used to pair
+around and Dubov and the tie-breaks fell over. So is an opponent whose own
+line for that round names somebody else.
 
 `XXR` and `142` are the same field: a file may carry both, but they must
 **agree**, and two different counts are refused rather than silently

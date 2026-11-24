@@ -2328,6 +2328,11 @@ defmodule Ainalrami.Trf do
       nil ->
         :ok
 
+      # `   0`, right-aligned rather than `0000`: nobody, as bbpPairings
+      # reads the field - a number. A bye, not a reference.
+      0 ->
+        :ok
+
       opp_rank ->
         unless Map.has_key?(by_rank, opp_rank) do
           raise ValidationError,
