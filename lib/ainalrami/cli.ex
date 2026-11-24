@@ -2050,6 +2050,7 @@ defmodule Ainalrami.CLI do
 
     with {:ok, text} <- read_input(input_path),
          {:ok, parsed} <- parse_input(text, flags),
+         :ok <- last_round_has_results(parsed),
          :dutch <- dubov_route(parsed, flags, prefs),
          :individual <- team_or_individual(parsed, prefs, flags) do
       round_count = report_roster(parsed)
@@ -3287,6 +3288,17 @@ Round #{round_number} - #{boards} board#{plural(boards)} over " <>
       Log.step("Checking #{rounds} round(s) - #{DubovCLI.title(system)}")
       Log.detail("initial colour #{opts[:initial_colour]}")
 
+      # The same reading the Dutch check takes: no count in the file, so the
+      # rounds it holds are the tournament. These three systems need the
+      # count outright, and without it every round past the first was
+      # refused as unpairable and reported as differing.
+      parsed = rounds_present_as_total(parsed, rounds)
+
+      opts =
+        if opts[:expected_rounds] in [nil, 0],
+          do: Keyword.put(opts, :expected_rounds, parsed.tournament[:number_of_rounds]),
+          else: opts
+
       results =
         Enum.map(1..rounds, fn round ->
           before = state_before_round(parsed.players, round, opts[:point_system])
@@ -3979,6 +3991,32 @@ Round #{round_number} - #{boards} board#{plural(boards)} over " <>
     e in Trf.ValidationError ->
       Log.error("invalid TRF file: #{Exception.message(e)}")
       {:error, :halt}
+  end
+
+  # A round paired but not yet played is not history: none of its games has
+  # a result, so nothing in it counts as met, and `-p` used to pair the next
+  # round straight back into the same boards and exit 0. Every system did,
+  # since none of them can tell "these two met" from a blank. Refused while
+  # every board of the last paired round is blank; one result entered is
+  # enough to show the round was played and the rest are merely late.
+  defp last_round_has_results(parsed) do
+    round = Trf.rounds_played(parsed.players)
+
+    results =
+      for p <- parsed.players,
+          game = Enum.at(p.games || [], round - 1),
+          game && game[:opponent_rank],
+          do: game[:result]
+
+    if round > 0 and results != [] and Enum.all?(results, &(&1 in [nil, ""])) do
+      Log.error(
+        "round #{round} has no results yet - enter them before pairing round #{round + 1}"
+      )
+
+      {:error, :halt}
+    else
+      :ok
+    end
   end
 
   defp report_roster(parsed) do

@@ -57,6 +57,23 @@ defmodule Ainalrami.TrfTest do
     }
   end
 
+  # `sample/0` with round 2 played between the two players it has: as
+  # written its round 2 opponent is a rank 3 with no 001 line, which
+  # `serialize/1` lets a partial roster have and `parse/1` refuses.
+  defp sample_whole_roster do
+    sample()
+    |> put_in([:players, Access.at(0), :games, Access.at(1)], %{
+      opponent_rank: 2,
+      colour: "b",
+      result: "="
+    })
+    |> put_in([:players, Access.at(1), :games, Access.at(1)], %{
+      opponent_rank: 1,
+      colour: "w",
+      result: "="
+    })
+  end
+
   test "header lines use the code + free-text layout" do
     lines = sample() |> Trf.serialize() |> String.split("\r\n")
 
@@ -327,7 +344,7 @@ defmodule Ainalrami.TrfTest do
   end
 
   test "parse/1 is the inverse of serialize/1 for header + player data" do
-    parsed = sample() |> Trf.serialize() |> Trf.parse()
+    parsed = sample_whole_roster() |> Trf.serialize() |> Trf.parse()
 
     assert parsed.tournament[:name] == "Test Open 2026"
     assert parsed.tournament[:city] == "Ghent"
@@ -352,13 +369,13 @@ defmodule Ainalrami.TrfTest do
 
     assert magnus.games == [
              %{opponent_rank: 2, colour: "w", result: "1"},
-             %{opponent_rank: 3, colour: "b", result: "="},
+             %{opponent_rank: 2, colour: "b", result: "="},
              %{opponent_rank: nil, colour: nil, result: "U"}
            ]
   end
 
   test "teams are serialized and parsed with correct player-slot columns" do
-    data = sample() |> Map.put(:teams, [%{name: "KGSRL Gent", player_ranks: [1, 2]}])
+    data = sample_whole_roster() |> Map.put(:teams, [%{name: "KGSRL Gent", player_ranks: [1, 2]}])
     trf = Trf.serialize(data)
     line = trf |> String.split("\r\n") |> Enum.find(&String.starts_with?(&1, "013"))
 
@@ -482,6 +499,30 @@ defmodule Ainalrami.TrfTest do
     }
 
     assert Trf.serialize(data) =~ "001"
+  end
+
+  test "parse/1 refuses an opponent rank that no 001 line carries, naming line, round and rank" do
+    # The same single-player card serialize/1 accepts above: read back as a
+    # whole file, the opponent it names does not exist.
+    for result <- ["1", ""] do
+      data = %{
+        tournament: %{name: "T"},
+        players: [
+          %{
+            rank: 1,
+            name: "A",
+            points: 0.0,
+            games: [%{opponent_rank: 2, colour: "w", result: result}]
+          }
+        ]
+      }
+
+      text = Trf.serialize(data)
+
+      assert_raise Trf.ValidationError,
+                   ~r/001 line for starting rank 1 \(A\), round 1: opponent 2 has no 001 line/,
+                   fn -> Trf.parse(text) end
+    end
   end
 
   test "parse/1 also raises on an illegal result combination" do
@@ -617,9 +658,18 @@ defmodule Ainalrami.TrfTest do
       |> place_col(86, "   1")
       |> round_block(2, 2, "b", "1")
 
-    parsed = Trf.parse(line <> "\r\n")
+    opponent =
+      ""
+      |> place_col(1, "001")
+      |> place_col(5, "   2")
+      |> place_col(15, "Early, Starter")
+      |> place_col(81, " 0.0")
+      |> place_col(86, "   2")
+      |> round_block(2, 1, "w", "0")
 
-    assert [%{games: [blank, real]}] = parsed.players
+    parsed = Trf.parse(line <> "\r\n" <> opponent <> "\r\n")
+
+    assert [%{games: [blank, real]}, _opponent] = parsed.players
     assert blank == %{opponent_rank: nil, colour: nil, result: nil}
     assert real == %{opponent_rank: 2, colour: "b", result: "1"}
   end
