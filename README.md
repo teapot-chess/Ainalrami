@@ -337,6 +337,17 @@ it prints the same bytes, writes the same files and exits with the same code
 as the escript on the same inputs. The examples further down are written for
 the escript; the packaged program takes the same arguments.
 
+### Verify a download
+
+Each release file, `SHA256SUMS` included, carries signed build provenance from
+GitHub (keyless, recorded in Sigstore). With the [GitHub CLI](https://cli.github.com/):
+
+```bash
+gh attestation verify ainalrami-linux-x86_64.tar.gz --repo teapot-chess/Ainalrami
+```
+
+It succeeds only for a file built by this repository's release workflow.
+
 ### Building from source
 
 For development, or to run a commit that has no release yet:
