@@ -66,6 +66,9 @@ with the reference on every one of them.
 
 ## [Unreleased]
 
+## [0.61.1] - 2026-11-25
+
+- [Change] **Two scratch files out of `tmp/`.** `tmp/old_fuzz.ex` (546 lines, a frozen copy of the fuzz generator) and `tmp/gen_identity.exs`, the one-off that checked the rewritten generator against it, rode in with the October refusal run and have been answering to nobody since: no test, tool, doc or CI step names them. The refusal run's own files in `tmp/refusal_big/` stay, because `docs/validation.md` cites them. Everything else the dead-code sweep looked at is called by something: every public function in `lib/` has a caller in the library, its tests, its tools, `verify/`, `lab/` or OpenPairings, and every tool script still compiles against the functions it calls. Nothing under `lib/` changed, so no pairing could have.
 - [Change] **Releases carry signed build provenance.** The escript, the three archives and `SHA256SUMS` are attested through GitHub and Sigstore, keyless, so `gh attestation verify <file> --repo teapot-chess/Ainalrami` can say who built a download and from what. Until now the checksums vouched for a file only against the release they sat in, which is a witness who was hired by the defendant.
 
 ## [0.61.0] - 2026-11-25
