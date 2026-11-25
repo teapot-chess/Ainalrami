@@ -2115,8 +2115,12 @@ defmodule Ainalrami.CLI do
   defp explain(input_path, flags, prefs) do
     Log.step("Loading #{input_path}")
 
+    # `last_round_has_results/1` for the same reason `-p` asks it: an
+    # explanation of the next round over one nobody has played explains
+    # the same boards again, at length and with conviction.
     with {:ok, text} <- read_input(input_path),
          {:ok, parsed} <- parse_input(text, flags),
+         :ok <- last_round_has_results(parsed),
          :dutch <- dubov_route(parsed, flags, prefs),
          :individual <- team_or_individual(parsed, prefs, flags) do
       round_count = report_roster(parsed)

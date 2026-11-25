@@ -66,6 +66,11 @@ with the reference on every one of them.
 
 ## [Unreleased]
 
+## [0.60.2] - 2026-11-25
+
+- [Fix] **`-x` will not explain round N+1 over a round N nobody has played.** 0.60.0 taught `-p` that a round paired with every result still blank is not history, and forgot that `-x` pairs the very same next round before explaining it. So `-p` refused while `-x` cheerfully explained, bracket by bracket, why the same boards should meet again. Now both say `round N has no results yet` and exit 1. Files with a result in their last round explain exactly as before.
+- [Verified] **Same pairings.** `tools/cli_golden.exs` (142,901 lines of `-p`, `-x`, `-c` and `-g` output) is byte for byte 0.60.1's apart from the version line. The engine was not touched, so nothing else could have moved; the receipt is for anyone who prefers evidence to reasoning.
+
 ## [0.60.1] - 2026-11-24
 
 - [Fix] **`Trf.parse/2` takes `allow_missing_opponents: true`.** 0.60.0 refused a game against a rank with no `001` line everywhere, which was right for pairing and wrong for one caller: OpenPairings' importer, which reads TRF06-vintage files that wrote a bye as a win against nobody and turns that into a bye on purpose, with a note to the arbiter. It now asks for the old tolerance by name. The CLI, the checkers and the tie-breaks never pass it, so everything 0.60.0 refuses it still refuses.

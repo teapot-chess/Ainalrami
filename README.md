@@ -379,6 +379,7 @@ endorsement auto-test.
 (exit 1, `round N has no results yet`) while every board of that round is
 still blank: a round paired but not played is not history, and pairing the
 next one would seat the same boards again. One result entered is enough.
+`-x` refuses the same way, since it pairs that next round to explain it.
 
 **`-g`** generates a random tournament and plays it forward, pairing every
 round with this engine. Every run is reproducible from its seed, and the
