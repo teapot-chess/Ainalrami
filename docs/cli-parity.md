@@ -37,6 +37,7 @@ unless said otherwise).
 | `bye_preferences:` `:avoid_hard` | same | `--bye-avoid=` | `XXO bye-avoid` **(new)** | **no** - warned |
 | `bye_preferences:` `:avoid_soft` | same | `--bye-avoid-soft=` | `XXO bye-avoid-soft` **(new)** | **no** - warned |
 | ... each for chosen rounds | `bye_preference_for_round/2` | `RANK@3-4+7` | `RANK@3-4+7` **(new)** | |
+| `Trf.parse/2` `strict: true` (a played game with the same colour on both lines is refused; without it, a `:warnings` entry) | not passed: its importer shows the warning to the arbiter instead | `--strict` **(new, 0.61.0; -p, -x, -c, -s)** | - (how hard to read the file, not a fact about the event) | |
 | `cascade_order: true` | not used (the generator's) | `--cascade-order` **(new)** | - (it is the order of the output, not a fact about the event) | yes |
 | `proof:` (a function given each round's proof, or `{:stream, fun}` given it line by line) | not used | `--proof=FILE` **(new)** | - (a certificate about the computation, not a fact about the event) | yes - the pairing is unchanged |
 | players' `:accelerations` - Baku (C.04.7) | `accelerations/3`: Group A `2 * ceil(n/4)`, frozen at round 1 | `--acceleration=baku`, `--baku-group-a=N` **(new for -p/-x/-c)** | `XXA`, `250` | yes |

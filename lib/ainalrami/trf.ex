@@ -2426,6 +2426,57 @@ defmodule Ainalrami.Trf do
     end
   end
 
+  # Both lines of a played game give the same colour. Somebody had White and
+  # somebody had Black; the file merely declines to say who, and the colour
+  # history every later round is paired on now holds one game twice over.
+  # bbpPairings refuses the file. This reader reports it instead, once per
+  # game, because the files that carry it come from other programs and an
+  # importer would rather show the arbiter the board than lose the event.
+  # `strict` is for a caller that would rather lose the event.
+  defp same_colour_games(players, strict?) do
+    by_rank = Map.new(players, &{&1[:rank], &1})
+
+    for player <- players,
+        {game, round} <- Enum.with_index(player[:games] || [], 1),
+        opp_rank = game[:opponent_rank],
+        is_integer(opp_rank) and opp_rank > player[:rank],
+        game_was_played?(game[:result]),
+        colour = colour_letter(game[:colour]),
+        colour != nil,
+        opponent = Map.get(by_rank, opp_rank),
+        opponent != nil,
+        back = Enum.at(opponent[:games] || [], round - 1),
+        back != nil and back[:opponent_rank] == player[:rank],
+        colour_letter(back[:colour]) == colour do
+      message =
+        "round #{round}: #{player[:rank]} (#{player_label(player)}) and " <>
+          "#{opp_rank} (#{player_label(opponent)}) both have #{colour_word(colour)} " <>
+          "in a played game"
+
+      if strict?, do: raise(ValidationError, message: message)
+
+      %{
+        type: :same_colour,
+        round: round,
+        ranks: {player[:rank], opp_rank},
+        colour: colour,
+        message: message
+      }
+    end
+  end
+
+  defp colour_letter(c) when is_binary(c) do
+    case String.downcase(c) do
+      letter when letter in ["w", "b"] -> letter
+      _ -> nil
+    end
+  end
+
+  defp colour_letter(_), do: nil
+
+  defp colour_word("w"), do: "White"
+  defp colour_word("b"), do: "Black"
+
   defp player_label(p), do: to_string(p[:name] || p[:rank])
 
   defp strip_bom("﻿" <> rest), do: rest
@@ -2497,6 +2548,15 @@ defmodule Ainalrami.Trf do
   rank that has no `001` line through, as before 0.60.0 - for an importer
   that turns such a game into a bye itself (TRF06-vintage files wrote a bye
   that way) and says so. Pairing, checking and tie-breaks never pass it.
+
+  A played game whose two lines give the same colour (`w` against `w`) is
+  read, because files from other programs carry it. It is not read in
+  silence: the result gets a `:warnings` list - absent when there is
+  nothing to say, so a clean file parses to the shape it always did - with
+  one `%{type: :same_colour, round:, ranks: {lower, higher}, colour:,
+  message:}` per game. `strict: true` refuses the file instead, as
+  bbpPairings' `validatePairConsistency` does; on the command line,
+  `--strict`.
   """
   def parse(text, opts \\ []) do
     lines =
@@ -2665,6 +2725,12 @@ defmodule Ainalrami.Trf do
       require_mutual: true,
       allow_missing_opponents: Keyword.get(opts, :allow_missing_opponents, false)
     )
+
+    result =
+      case same_colour_games(result.players, Keyword.get(opts, :strict, false)) do
+        [] -> result
+        warnings -> Map.put(result, :warnings, warnings)
+      end
 
     # The round about to be paired, counted once for both of the records
     # that place something in it, so neither can move the goalposts for
