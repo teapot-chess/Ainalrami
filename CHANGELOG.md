@@ -66,6 +66,10 @@ with the reference on every one of them.
 
 ## [Unreleased]
 
+## [0.61.0] - 2026-11-25
+
+- [Feature] **A played game with the same colour on both lines is a warning, and `--strict` makes it a refusal.** `w` against `w` in a game that was played means somebody had Black and the file forgot who. bbpPairings refuses such a file outright; this reader took it in without a word, which was the one answer nobody had argued for. It now reads it and says `warning: round 1: 1 (P1) and 3 (P3) both have White in a played game`, once per game, on stderr for `-p`, `-x`, `-c` and `-s`, and as `:warnings` on what `Trf.parse/2` returns (the key is absent when there is nothing to say). Not refused by default, because the files that carry it come from other programs and OpenPairings imports them; `--strict` (`strict: true`) refuses them for anyone who would rather the file were right than read. Forfeits are not games and are not asked. Files without such a game parse, pair and print exactly as before.
+
 ## [0.60.2] - 2026-11-25
 
 - [Fix] **`-x` will not explain round N+1 over a round N nobody has played.** 0.60.0 taught `-p` that a round paired with every result still blank is not history, and forgot that `-x` pairs the very same next round before explaining it. So `-p` refused while `-x` cheerfully explained, bracket by bracket, why the same boards should meet again. Now both say `round N has no results yet` and exit 1. Files with a result in their last round explain exactly as before.

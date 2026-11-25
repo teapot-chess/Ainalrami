@@ -126,7 +126,7 @@ defmodule Ainalrami.CLI do
   # nothing says so.
   @bare_flags ~w(-p -g -c -x --explain -q --quiet -d --debug -h --help --version --lineups
                  --roundrobin --match-format -s --standings --cascade-order
-                 --bye-alternatives --float-alternatives --alternative-pairs)
+                 --bye-alternatives --float-alternatives --alternative-pairs --strict)
   @valued_flags ~w(seed players rounds forfeit-pct bye-pct forbidden-pct
                    acceleration initial-colour initial-color force absent
                    ratings rating-range rating-top rating-step rating-sigma
@@ -719,7 +719,8 @@ defmodule Ainalrami.CLI do
     "cap-rounds" => [:check, :standings],
     "dialect" => [:generate],
     "system" => [:pair, :explain, :check, :generate],
-    "provisional-rating" => [:pair, :check]
+    "provisional-rating" => [:pair, :check],
+    "strict" => [:pair, :explain, :check, :standings]
   }
 
   defp misplaced_flag(_flags, nil), do: nil
@@ -3982,13 +3983,19 @@ Round #{round_number} - #{boards} board#{plural(boards)} over " <>
   # and `-p` used to pair it, as a round of no boards, and write `0` with
   # exit 0, which reads exactly like a successful run to anything driving
   # this program from a script.
+  #
+  # What the reader lets through but will not keep quiet about (a played
+  # game with the same colour on both lines) goes to stderr here, one line
+  # a game; `--strict` makes the reader refuse it instead.
   defp parse_input(text, flags) do
-    case Trf.parse(text) do
+    case Trf.parse(text, strict: "--strict" in flags) do
       %{players: []} ->
         Log.error("invalid TRF file: no player records (001 lines) - is this a TRF file?")
         {:error, :halt}
 
       parsed ->
+        {warnings, parsed} = Map.pop(parsed, :warnings, [])
+        Enum.each(warnings, &Log.warn(&1.message <> " (--strict refuses this)"))
         {:ok, with_input_flags(parsed, flags)}
     end
   rescue
@@ -4094,6 +4101,9 @@ Round #{round_number} - #{boards} board#{plural(boards)} over " <>
     Options:
       -q, --quiet    Warnings and errors only
       -d, --debug    Add engine internals (bracket paths, sizes, timings)
+      --strict       (-p, -x, -c, -s) refuse a played game whose two lines
+                     give the same colour, as bbpPairings does; without it
+                     the file is read and each such game is a warning
       --force=A-B  With -x: the best round in which A and B meet, and
                    what it costs against the round that was paired
       --absent=N   With -x: N did not turn up - the least disruptive
