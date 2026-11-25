@@ -66,6 +66,8 @@ with the reference on every one of them.
 
 ## [Unreleased]
 
+- [Change] **Releases carry signed build provenance.** The escript, the three archives and `SHA256SUMS` are attested through GitHub and Sigstore, keyless, so `gh attestation verify <file> --repo teapot-chess/Ainalrami` can say who built a download and from what. Until now the checksums vouched for a file only against the release they sat in, which is a witness who was hired by the defendant.
+
 ## [0.61.0] - 2026-11-25
 
 - [Feature] **A played game with the same colour on both lines is a warning, and `--strict` makes it a refusal.** `w` against `w` in a game that was played means somebody had Black and the file forgot who. bbpPairings refuses such a file outright; this reader took it in without a word, which was the one answer nobody had argued for. It now reads it and says `warning: round 1: 1 (P1) and 3 (P3) both have White in a played game`, once per game, on stderr for `-p`, `-x`, `-c` and `-s`, and as `:warnings` on what `Trf.parse/2` returns (the key is absent when there is nothing to say). Not refused by default, because the files that carry it come from other programs and OpenPairings imports them; `--strict` (`strict: true`) refuses them for anyone who would rather the file were right than read. Forfeits are not games and are not asked. Files without such a game parse, pair and print exactly as before.

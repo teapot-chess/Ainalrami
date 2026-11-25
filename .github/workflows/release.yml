@@ -60,6 +60,9 @@ jobs:
     runs-on: ubuntu-24.04
     permissions:
       contents: write
+      # Keyless attestation: the OIDC token and the right to store the result.
+      id-token: write
+      attestations: write
 
     steps:
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -80,6 +83,13 @@ jobs:
         mix deps.get
         MIX_ENV=prod mix escript.build
 
+    # Signed build provenance, keyless (GitHub OIDC, Sigstore). Check with:
+    #   gh attestation verify ainalrami --repo teapot-chess/Ainalrami
+    - name: Attest the build provenance
+      uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+      with:
+        subject-path: ainalrami
+
     - name: Attach to the release
       env:
         GH_TOKEN: ${{ github.token }}
@@ -92,6 +102,9 @@ jobs:
     runs-on: ${{ matrix.runner }}
     permissions:
       contents: write
+      # Keyless attestation: the OIDC token and the right to store the result.
+      id-token: write
+      attestations: write
     strategy:
       fail-fast: false
       matrix:
@@ -206,6 +219,12 @@ jobs:
         PATH=/usr/bin:/bin "$exe" --version
         bash rel/smoke.sh "$exe" ainalrami
 
+    - name: Attest the build provenance
+      if: github.event_name != 'pull_request'
+      uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+      with:
+        subject-path: dist/${{ matrix.archive }}
+
     - name: Attach to the release
       if: github.event_name != 'pull_request'
       env:
@@ -221,6 +240,9 @@ jobs:
     runs-on: ubuntu-24.04
     permissions:
       contents: write
+      # Keyless attestation: the OIDC token and the right to store the result.
+      id-token: write
+      attestations: write
 
     steps:
     # One list for everything on the release, written from what is really
@@ -236,3 +258,8 @@ jobs:
         gh release download "$TAG" --pattern 'ainalrami' --pattern 'ainalrami-*.zip' --pattern 'ainalrami-*.tar.gz'
         sha256sum * | tee SHA256SUMS
         gh release upload "$TAG" SHA256SUMS --clobber
+
+    - name: Attest SHA256SUMS
+      uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+      with:
+        subject-path: assets/SHA256SUMS
